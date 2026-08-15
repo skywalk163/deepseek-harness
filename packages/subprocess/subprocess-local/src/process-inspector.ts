@@ -356,6 +356,45 @@ class MacProcessInspector extends PosixProcessInspector {
 
 }
 
+class FreeBSDProcessInspector extends PosixProcessInspector {
+  foregroundPgid(shellPid: number): number | undefined {
+    try {
+      const value = Number(this.internals.exec('/bin/ps', ['-o', 'tpgid=', '-p', String(shellPid)]).trim())
+      return Number.isSafeInteger(value) && value > 0 ? value : undefined
+    } catch (_missingProcess) {
+      return undefined
+    }
+  }
+
+  isStdinWaiting(_pgid: number): boolean {
+    return false
+  }
+
+  processTree(rootPid: number): ProcessIdentity[] {
+    return processTree(freebsdProcessTable(this.internals), rootPid)
+  }
+
+  processSession(_sessionId: number): ProcessIdentity[] {
+    return []
+  }
+
+  isAlive(identity: ProcessIdentity): boolean {
+    return freebsdProcessTable(this.internals).some(entry => entry.pid === identity.pid && entry.started === identity.started)
+  }
+
+}
+
+function freebsdProcessTable(internals: ProcessInspectorInternals): PsEntry[] {
+  return internals.exec('/bin/ps', ['-axo', 'pid,ppid,lstart'])
+    .split('\n')
+    .slice(1)
+    .flatMap((line) => {
+      const match = /^\s*(\d+)\s+(\d+)\s+(.+?)\s*$/.exec(line)
+      if (match?.[1] === undefined || match[2] === undefined || match[3] === undefined) return []
+      return [{ pid: Number(match[1]), parentPid: Number(match[2]), started: match[3] }]
+    })
+}
+
 /**
  * Create the supported platform inspector or fail at plugin load.
  * @param platform - target Node platform.
@@ -370,5 +409,6 @@ export function createProcessInspector(
 ): ProcessInspector {
   if (platform === 'linux') return new LinuxProcessInspector(arch, internals)
   if (platform === 'darwin') return new MacProcessInspector(internals)
+  if (platform === 'freebsd') return new FreeBSDProcessInspector(internals)
   throw new Error(`subprocess-local: terminal inspection is unsupported on platform ${platform}`)
 }
