@@ -37,9 +37,8 @@ pnpm dsh web
 
 ### 在 FreeBSD 上从源码运行
 
-DeepSeek Harness 可以在 FreeBSD 上运行（已在 FreeBSD 14.3-RELEASE amd64 +
-Node 24 上验证）。所有 FreeBSD 相关的适配都已固化在 `pnpm-workspace.yaml` 中，
-克隆后按标准流程即可：
+DeepSeek Harness 可以在 FreeBSD 上运行（已在 FreeBSD 14.3-RELEASE amd64 + Node 24
+上验证）。所有 FreeBSD 相关的适配都已固化在 `pnpm-workspace.yaml` 中，clone 之后走标准流程即可：
 
 ```sh
 git clone https://github.com/deepseek-ai/deepseek-harness.git
@@ -49,8 +48,10 @@ pnpm run build
 pnpm dsh:freebsd web
 ```
 
-Web UI 监听 `http://127.0.0.1:3080`。从其他机器访问需做端口转发：
-`ssh -L 3080:127.0.0.1:3080 <user>@<freebsd-host>`。
+Web UI 监听在 `http://127.0.0.1:3080`，并且**只响应环回地址**（见下方
+"如何访问 Web UI"——这是硬性安全围栏，不是配置项）。若想从别的机器打开，请用 SSH 隧道：
+`ssh -L 3080:127.0.0.1:3080 <user>@<freebsd-host>`，然后浏览器访问
+`http://localhost:3080`。
 
 #### 前置依赖
 
@@ -58,22 +59,21 @@ Web UI 监听 `http://127.0.0.1:3080`。从其他机器访问需做端口转发�
 pkg install node24 npm-node24 gmake python3 pkgconf
 ```
 
-本仓库通过 `packageManager` 钉住 `pnpm@11.7.0`，而 FreeBSD ports 里的 `pnpm`
-可能偏旧。请安装钉住的版本（root 全局安装，或装到用户目录）：
+本仓库通过 `packageManager` 钉死 `pnpm@11.7.0`，而 FreeBSD ports 里的 `pnpm`
+可能更旧。请安装钉死的版本，要么以 root 全局安装，要么装到自己家目录：
 
 ```sh
 npm install -g pnpm@11.7.0
-# 无 root 权限时：
+# 或者不用 root：
 npm install pnpm@11.7.0 --prefix "$HOME/.pnpm-home"
 export PATH="$HOME/.pnpm-home/node_modules/.bin:$PATH"
 ```
 
-通常用的 `corepack enable` 在非 root 下会因为要往 `/usr/local/bin` 写 shim 而
-报 `EACCES`。
+`corepack enable` 是常见替代方案，但非 root 用户会因向 `/usr/local/bin` 写 shim
+而报 `EACCES`。
 
-`pnpm install` 期间 `node-pty` 会编译原生模块，而 `node-gyp` 要求名为 `make`
-的 GNU make——FreeBSD 的 `/usr/bin/make` 是 BSD make。需要加一个 shim 到 `PATH`
-前面：
+`node-pty` 在 `pnpm install` 期间会编译原生插件，而 `node-gyp` 需要把 GNU make
+当作 `make` 调用——FreeBSD 的 `/usr/bin/make` 是 BSD make。在 `PATH` 前面放一个 shim：
 
 ```sh
 mkdir -p "$HOME/bin" && ln -sf /usr/local/bin/gmake "$HOME/bin/make"
@@ -86,48 +86,129 @@ export PATH="$HOME/bin:$PATH"
 `DSH_PERMISSION_MODE`：
 
 - **`--expose-internals` 在 FreeBSD 上是硬性必需。** loader 获取 Node 内部 ESM
-  loader 有两条路：这个 flag，或者 `node-addon-require-builtin` 原生插件。而该
-  插件只发布了 darwin/linux/win32 的预编译包——没有
-  `node-addon-require-builtin-freebsd-x64`，也没有源码编译兜底——所以在 FreeBSD
-  上只剩这个 flag。不加它，HMR 服务（`web` 这类长驻形态会无条件挂载）会直接以
-  `--expose-internals is required for HMR service` 中止启动。这个 flag 也不能通过
-  `NODE_OPTIONS` 传入，Node 会拒绝。
+  loader 要么靠这个 flag，要么靠 `node-addon-require-builtin` 原生插件。该插件只发布
+  darwin/linux/win32 预编译包——既没有 `node-addon-require-builtin-freebsd-x64`，
+  也没有源码编译兜底——所以在 FreeBSD 上这个 flag 是唯一路径。缺少它时，`web` 这类
+  常驻面无条件挂载的 HMR 服务会中止启动并报告
+  `--expose-internals is required for HMR service`。该 flag 不能放进 `NODE_OPTIONS`，
+  Node 会在那里拒绝它。
 - **沙箱没有 FreeBSD 后端。** 隔离只支持 Linux（`bwrap`/`landlock`）、macOS
-  （`seatbelt`）和 Windows ACL，所以在 FreeBSD 上会 fail-closed 并中断启动。启动
-  时需要：
+  （`seatbelt`）和 Windows ACL，所以在 FreeBSD 上会 fail-closed 并中断启动。启动方式：
 
   ```sh
   DSH_PERMISSION_MODE=danger-full-access pnpm dsh:freebsd web
   ```
 
-  这会让 agent **在无隔离状态下运行**。请只在你愿意让 agent 直接改动的机器上这么做。
+  这会以**无约束**方式运行 agent。只在你愿意让 agent 修改该机器时才这样做。
 
 #### 仓库为 FreeBSD 预置了什么
 
-全部位于 `pnpm-workspace.yaml`——pnpm v11 已不再读取 `package.json` 的 `pnpm`
-字段，`.npmrc` 也只读 auth/registry 类配置：
+全部位于 `pnpm-workspace.yaml`——pnpm v11 不再读取 `package.json` 的 `pnpm` 字段，
+也只从 `.npmrc` 读取 auth/registry 相关的键：
 
 - **`supportedArchitectures`**（`os: freebsd`，`cpu` 同时含 `x64` 与 `wasm32`）。
   `sharp` 没有发布 FreeBSD 原生二进制（`@img/sharp-freebsd-x64` 不存在），所以
   它的 WASM 路线——`@img/sharp-freebsd-wasm32` 转发到 `@img/sharp-wasm32`——是
-  唯一可用的图像后端。该包声明了 `cpu: wasm32`，因此在 x64 主机上如果不显式列出
-  `wasm32`，会被 pnpm 的平台过滤跳过。也就是说图像处理走 WASM，比原生构建慢。
-  漏掉这项，启动时会报
+  唯一可用的图像后端。该包声明 `cpu: wasm32`，因此若 `wasm32` 未列入，pnpm 的平台
+  过滤会在 x64 主机上跳过它。图像处理因此走 WASM，比原生构建慢。漏掉这项会在启动时报
   `Could not load the "sharp" module using the freebsd-x64 runtime`。
 - **`shamefullyHoist: true`**。运行时 loader 通过动态
-  `import('@deepseek-ai/dsh-client-ui-*')` 解析插件。在 pnpm 的隔离式布局下，这些
-  工作区包不会出现在顶层 `node_modules`，动态导入会以 `ERR_MODULE_NOT_FOUND` 失败。
-- **针对 `sharp` 的 `packageExtensions`**——与 `supportedArchitectures` 作用重叠，
-  保留作为对两个 WASM 运行时包的显式声明。
+  `import('@deepseek-ai/dsh-client-ui-*')` 解析插件。在 pnpm 的隔离布局下，这些
+  工作区包不会出现在顶层 `node_modules`，导入会失败并报告 `ERR_MODULE_NOT_FOUND`。
+- **`sharp` 的 `packageExtensions`**——与 `supportedArchitectures` 冗余，保留为对两个
+  WASM 运行时包的显式声明。
 
 `.npmrc` 另外把 `registry` 和 `disturl` 指向了 npmmirror 镜像，让 FreeBSD 平台
-tarball 和 `node-pty` 的 Node headers 在中国大陆网络下能稳定下载。若想用默认源，
-删掉这两行即可。
+tarball 与 `node-pty` 的 Node headers 下载在大陆更可靠。删掉这两行即可改用默认源。
+
+#### 如何访问 Web UI（想对外暴露前必读）
+
+> **不能通过 nginx / Caddy / Apache 或任何反向代理访问，也不能直接通过 LAN IP 或
+> 公网域名访问。** 它只在环回地址（`localhost` / `127.0.0.1`）下可用。
+
+harness 把所有 host 侧的文件系统 RPC——包括"选择工作区目录"选择器
+（`host.listDirectory`）——都放在一道**仅限环回的信任围栏**之后
+（`packages/client/connection/src/rpc-host.ts`、`api-request-trust.ts`）。请求的
+`Host` 头若不是被认可的环回名，会在到达处理器之前被拒并返回 `HTTP 403`。该检查
+只接受 `localhost`、`[::1]` 和 `127.x.x.x`。
+
+实际影响：
+
+- **反向代理 / LAN IP / 公网域名 → `403`。** 即使 nginx 完美转发，浏览器发出的
+  `Host` 也是 `<lan-ip>:3080`（或你的域名）。围栏会拒绝它，于是第一个文件操作——
+  选择工作区目录——就会失败并报
+  `transport failure for /api/host.listDirectory: HTTP 403`。普通反向代理会保留
+  客户端的 `Host`，因此无济于事；把 `Host`/`Origin` 改写成 `localhost:3080` 既脆弱
+  又**不**推荐给新手。
+- **直接用 `http://<lan-ip>:3080` 打开 → 同样被拦**，原因相同；此外浏览器在非安全
+  （非 localhost、非 HTTPS）上下文会禁用 `crypto.randomUUID()`。（仓库已附带 polyfill
+  来缓解这个报错，但文件操作的真正拦路虎是 403 围栏。）
+
+可用的访问方式：
+
+1. **SSH 隧道（推荐）。** 在你的工作机上：
+   ```sh
+   ssh -L 3080:127.0.0.1:3080 <user>@<freebsd-host>
+   ```
+   然后打开 `http://localhost:3080`。这同时给出环回 `Host`（无 403）**和**安全上下文
+   （原生 `crypto.randomUUID` 可用）——两个问题一次性消失。
+2. **在 FreeBSD 本机上**，直接访问 `http://127.0.0.1:3080` 即可，一切原生可用。
+
+如果你确实需要脱离本机访问，请让浏览器看到的是 `localhost`（隧道或 VPN），而不是
+保留客户端 `Host` 的反向代理。
+
+#### 作为服务运行（重启脚本 + rc.d）
+
+测试机上 `workbuddy` 家目录下有两个辅助脚本（请按你自己的用户调整路径）：
+
+- `/home/workbuddy/dsh-web-run.sh`——启动器：设置 `DSH_PERMISSION_MODE`、进入仓库目录、
+  `exec` `pnpm dsh:freebsd web`。
+- `/home/workbuddy/dsh-web-restart.sh`——一键控制：`stop | start | restart | status`
+  （默认 `restart`）。
+
+```sh
+sh /home/workbuddy/dsh-web-restart.sh restart   # 也可：stop / start / status
+```
+
+如需开机自启，安装 rc.d 服务（需 root）：
+
+```sh
+su - root
+cp /home/workbuddy/dsh_web.rcd /usr/local/etc/rc.d/dsh_web
+chmod 555 /usr/local/etc/rc.d/dsh_web
+sysrc dsh_web_enable=YES
+service dsh_web start        # 验证
+service dsh_web status
+```
+
+注意：
+
+- `pnpm` 已持久化到 `/home/workbuddy/.local/bin/pnpm`（v11.7.0，与仓库 `packageManager`
+  一致）。**不要**依赖 `/tmp/p117` 这类路径——重启会清空 `/tmp`，服务将启动失败。
+- rc.d 的 `pidfile` 与日志都在家目录下
+  （`/home/workbuddy/dsh_web.pid`、`/home/workbuddy/dsh_web.log`），以熬过重启与 `/tmp`
+  清理。
+- rc.d 服务以 `workbuddy` 用户运行；若装到别处请改 `dsh_web_user`。
+
+#### 排错 / FreeBSD 已知踩坑
+
+| 现象 | 原因 | 解决办法 |
+| --- | --- | --- |
+| `Could not load the "sharp" module using the freebsd-x64 runtime` | `sharp` 无 FreeBSD 原生二进制；WASM 路线未装 | 保留 `pnpm-workspace.yaml` 中的 `supportedArchitectures`（`os: freebsd`，`cpu` 含 `wasm32`）与 `sharp` 的 `packageExtensions`。不要删。 |
+| `@deepseek-ai/dsh-client-ui-*` 报 `ERR_MODULE_NOT_FOUND` | 工作区插件未被提升 | 保留 `pnpm-workspace.yaml` 中的 `shamefullyHoist: true`。 |
+| `--expose-internals is required for HMR service` | 原生插件路线在 FreeBSD 不可用 | 使用 `dsh:freebsd` 脚本（它会加 `--expose-internals`）。该 flag 不能放进 `NODE_OPTIONS`。 |
+| 启动中止 / 沙箱 fail-closed | FreeBSD 无沙箱后端 | 以 `DSH_PERMISSION_MODE=danger-full-access` 启动（agent 无约束运行）。 |
+| 选目录时 `crypto.randomUUID is not a function` | 非安全上下文（plain http、非 localhost） | 通过 `http://localhost:3080`（SSH 隧道）访问。仓库已含 polyfill，但仍建议用 localhost。 |
+| `transport failure for /api/host.listDirectory: HTTP 403` | 环回信任围栏拒绝非环回 `Host` | 用 SSH 隧道 / `localhost` 访问（见"如何访问 Web UI"）。**不要**用反向代理或 LAN IP。 |
+| `node-pty` 编译失败 / 下载 Node headers 时 ETIMEDOUT | `node-gyp` 取不到 headers | 保留 `.npmrc` 中的 `disturl=https://registry.npmmirror.com/-/binary/node`（或用就近镜像）；确保 `gmake` shim 在 `PATH` 上。 |
+| `pnpm` 版本不对 / 依赖解析异常 | 版本不匹配 | 严格使用 `pnpm@11.7.0`（仓库 `packageManager`）。 |
+| 提交/推送时 `gen-third-party-notices` 钩子失败 | 上游钩子依赖 `@anthropic-ai/claude-agent-sdk-linux-x64`（仅 Linux 构建） | FreeBSD 平台不兼容，与你的改动无关。绕过：`git commit --no-verify` 或 `git -c core.hooksPath=/tmp/nohooks push`。只要没新增依赖，内容安全。 |
 
 #### FreeBSD 上的验证结果
 
 `node-pty` 原生编译通过、`sharp` 经 WASM 成功渲染、`pnpm run build` 完整跑通
-（`tsc -b` + `tsdown` + `vite`）、`dsh web` 正常通过 HTTP 提供 UI。
+（`tsc -b` + `tsdown` + `vite`）、`dsh web` 正常通过 HTTP 在环回地址上提供 UI。
+
 
 ## 社区与支持
 
