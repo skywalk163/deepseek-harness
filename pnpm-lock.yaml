@@ -8,6 +8,8 @@ overrides:
   '@deepseek-ai/cosmokit': link:vendor/cosmokit
   '@deepseek-ai/schemastery': link:vendor/schemastery
 
+packageExtensionsChecksum: sha256-wL7od7DfVQFCPGuFgQYh2UHvX0MTwc+D6rrFPusxsRk=
+
 patchedDependencies:
   node-pty@1.1.0: 7a0c04f1f49d798a9ffe2f7f414c01064a44ca2489772d0c3e1235ab336755e6
 
@@ -19130,6 +19132,7 @@ snapshots:
       '@img/sharp-linux-x64': 0.35.3
       '@img/sharp-linuxmusl-arm64': 0.35.3
       '@img/sharp-linuxmusl-x64': 0.35.3
+      '@img/sharp-wasm32': 0.35.3
       '@img/sharp-webcontainers-wasm32': 0.35.3
       '@img/sharp-win32-arm64': 0.35.3
       '@img/sharp-win32-ia32': 0.35.3

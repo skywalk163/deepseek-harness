@@ -70,3 +70,26 @@ minimumReleaseAgeExclude:
 
 patchedDependencies:
   node-pty@1.1.0: patches/node-pty@1.1.0.patch
+
+# --- FreeBSD support (added for the FreeBSD port) ---
+# pnpm v11 reads these from pnpm-workspace.yaml, NOT package.json's `pnpm` field.
+# Force-install sharp's FreeBSD/WASM runtime: sharp ships NO native freebsd-x64
+# binary, so the wasm fallback (@img/sharp-freebsd-wasm32 -> @img/sharp-wasm32)
+# is the only working image backend on FreeBSD.
+supportedArchitectures:
+  os:
+    - freebsd
+  cpu:
+    - x64
+    - wasm32
+  libc:
+    - any
+# Hoist every workspace + dependency package into the top-level node_modules so
+# the runtime loader's dynamic import('@deepseek-ai/dsh-client-ui-*') resolves.
+shamefullyHoist: true
+# Belt-and-suspenders: make sharp explicitly declare its FreeBSD/WASM runtimes.
+packageExtensions:
+  'sharp@*':
+    optionalDependencies:
+      '@img/sharp-freebsd-wasm32': '*'
+      '@img/sharp-wasm32': '*'
