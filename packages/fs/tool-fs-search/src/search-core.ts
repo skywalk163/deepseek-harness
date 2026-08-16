@@ -155,10 +155,10 @@ function completeStdout(toolName: string, stdout: SubprocessOutputRead, rawOutpu
   )
 }
 
-let rgPathPromise: Promise<string> | undefined
-
 /**
- * The ripgrep binary path, resolved lazily once per process.
+ * The ripgrep binary path, resolved at each call (not memoized) so that a
+ * system `rg` installed after the process started is picked up on the very
+ * next search without having to restart the harness.
  *
  * `@vscode/ripgrep` resolves its platform package (`@vscode/ripgrep-<platform>
  * -<arch>`) at module evaluation, so a static import would turn a missing or
@@ -175,11 +175,11 @@ let rgPathPromise: Promise<string> | undefined
  *   4. the packaged path even if missing — lets spawn surface `SEARCH_FAILED`
  *      as before when nothing usable is available.
  *
- * @returns the chosen binary's absolute path; the memoized promise rejects
+ * @returns the chosen binary's absolute path; the promise rejects
  *   when no platform package can be resolved and none of the fallbacks exist.
  */
 export function resolveRgPath(): Promise<string> {
-  rgPathPromise ??= (async (): Promise<string> => {
+  return (async (): Promise<string> => {
     const override = process.env.DSH_RIPGREP_PATH
     if (override !== undefined && existsSync(override)) return override
     try {
@@ -198,7 +198,6 @@ export function resolveRgPath(): Promise<string> {
     // original SEARCH_FAILED instead of an obscure undefined-path error.
     return (await import('@vscode/ripgrep')).rgPath
   })()
-  return rgPathPromise
 }
 
 /**
