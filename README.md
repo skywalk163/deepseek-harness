@@ -58,8 +58,19 @@ not a config toggle). To open it from another machine, use an SSH tunnel:
 #### Prerequisites
 
 ```sh
-pkg install node24 npm-node24 gmake python3 pkgconf
+pkg install node24 npm-node24 gmake python3 pkgconf bash
 ```
+
+`bash` is required even though it is **not** part of a default FreeBSD install
+(the base interactive shell is `/bin/sh`, an ash derivative). The
+`terminal-bash` backend -- used by the `code` and `mini` agent modes -- depends
+on bash-only behaviour: `PROMPT_COMMAND` emits the per-prompt OSC `133;D;` marker
+that the harness reads to know when a command finished and with what exit status,
+and the default shell flags `--noprofile --norc -i` are bash-only. The base
+`/bin/sh` cannot be substituted; if bash is missing the service fails with
+`PTY shell exited during startup` (or, with the bundled guard, a clear
+`terminal-bash: ... does not exist` message). Install bash from ports if your
+image omitted it: `cd /usr/ports/shells/bash && make install clean`.
 
 This repo pins `packageManager: pnpm@11.7.0`; the `pnpm` in FreeBSD ports may be
 older. Install the pinned version, either globally as root or under your home:
@@ -223,6 +234,7 @@ Notes:
 | `node-pty` build fails / ETIMEDOUT fetching Node headers | `node-gyp` cannot reach headers | Keep `disturl=https://registry.npmmirror.com/-/binary/node` in `.npmrc` (or your nearest mirror); ensure the `gmake` shim is on `PATH`. |
 | wrong `pnpm` / odd dependency resolution | version mismatch | Use exactly `pnpm@11.7.0` (repo `packageManager`). |
 | `gen-third-party-notices` hook fails on commit/push | upstream hook needs `@anthropic-ai/claude-agent-sdk-linux-x64` (Linux-only build) | FreeBSD platform incompatibility, unrelated to your change. Bypass with `git commit --no-verify` or `git -c core.hooksPath=/tmp/nohooks push`. Content is safe when you have not added dependencies. |
+| `PTY shell exited during startup` / `terminal-bash: ... does not exist` | `bash` not installed (FreeBSD ships `/bin/sh`, not bash); the `terminal-bash` backend requires bash (`PROMPT_COMMAND` + `--noprofile/--norc`) | `pkg install bash` (or `cd /usr/ports/shells/bash && make install clean`). The backend cannot use the default `/bin/sh`. |
 
 #### Verified on FreeBSD
 

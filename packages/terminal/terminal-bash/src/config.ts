@@ -3,7 +3,21 @@
 import z from '@deepseek-ai/schemastery'
 import { existsSync } from 'node:fs'
 
-/** Resolve the default interactive shell for the current platform. */
+/**
+ * Resolve the default interactive shell for the current platform.
+ *
+ * FreeBSD does **not** ship bash in a default install -- its base interactive
+ * shell is `/bin/sh`, an ash derivative. The terminal-bash backend, however,
+ * depends on bash-specific behaviour:
+ *   - `PROMPT_COMMAND` (set in `childEnvironment`) emits the per-prompt OSC
+ *     `133;D;` marker the sanitizer uses to detect prompt boundaries and command
+ *     exit status; ash does not honor `PROMPT_COMMAND`.
+ *   - The default `shellArgs` (`--noprofile --norc -i`) are bash-only flags; ash
+ *     treats `--noprofile`/`--norc` as script filenames and fails to start.
+ * So on FreeBSD we resolve bash from its usual ports location and let
+ * `validateConfig` fail loudly (with install instructions) when it is absent,
+ * instead of producing a cryptic "PTY shell exited during startup" at spawn.
+ */
 function defaultShellPath(): string {
   if (process.platform === 'freebsd') {
     for (const candidate of ['/usr/local/bin/bash', '/bin/bash', '/usr/bin/bash']) {
@@ -83,6 +97,31 @@ export function validateConfig(config: Config): asserts config is ResolvedConfig
   const resolved = config as ResolvedConfig
   if (resolved.backendType.length === 0) throw new Error('terminal-bash: backendType must be non-empty')
   if (resolved.shellPath.length === 0) throw new Error('terminal-bash: shellPath must be non-empty')
+  // FreeBSD does not ship bash by default (its base shell is /bin/sh, an ash
+  // derivative). This backend requires bash: `PROMPT_COMMAND` (set in
+  // index.ts `childEnvironment`) drives the per-prompt OSC 133;D; marker the
+  // sanitizer relies on, and the default `shellArgs` (`--noprofile --norc -i`)
+  // are bash-only flags. Fail here with install guidance rather than with a
+  // cryptic "PTY shell exited during startup" at PTY spawn time.
+  if (process.platform === 'freebsd') {
+    if (!existsSync(resolved.shellPath)) {
+      throw new Error(
+        `terminal-bash: the configured shell "${resolved.shellPath}" does not exist. ` +
+          'FreeBSD does not include bash in a default install. Install it first, e.g. ' +
+          '`pkg install bash` (or from ports: `cd /usr/ports/shells/bash && make install clean`). ' +
+          'If bash is installed at a non-standard path, set terminal-bash.shellPath to its absolute path.',
+      )
+    }
+    const shellBase = resolved.shellPath.split('/').pop() ?? ''
+    if (shellBase !== 'bash' && !shellBase.endsWith('bash')) {
+      throw new Error(
+        `terminal-bash: "${resolved.shellPath}" does not look like bash. ` +
+          'The terminal-bash backend requires bash (it uses PROMPT_COMMAND and the ' +
+          '--noprofile/--norc flags); the FreeBSD default /bin/sh (ash) is not supported. ' +
+          'Install bash and point terminal-bash.shellPath at it.',
+      )
+    }
+  }
   for (const [name, value] of Object.entries(resolved)) {
     if (typeof value === 'number' && (!Number.isSafeInteger(value) || value <= 0)) {
       throw new Error(`terminal-bash: ${name} must be a positive safe integer`)
