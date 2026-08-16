@@ -40,6 +40,8 @@ pnpm dsh web
 > **FreeBSD 请用本 fork——尚未合并到上游。** FreeBSD 移植（修复 `process-inspector` 的 ps 语法、`terminal-bash` 默认 shell、`crypto.randomUUID` polyfill，以及仅环回地址的信任围栏）**维护在本仓库**，并且**尚未合并进上游 `deepseek-ai/deepseek-harness`**。在合并落地前，请克隆**本仓库**而非上游，否则会缺少 FreeBSD 修复。
 > 镜像：`https://github.com/skywalk163/deepseek-harness.git`
 
+> **完整分步安装手册：** 参见 [FREEBSD.zh.md](FREEBSD.zh.md)（前置依赖、`@pnpm/exe.freebsd-x64` 坑、gmake shim、bash 硬依赖、环回围栏、服务/rc.d、git 远端、排错表）。
+
 DeepSeek Harness 可以在 FreeBSD 上运行（已在 FreeBSD 14.3-RELEASE amd64 + Node 24
 上验证）。所有 FreeBSD 相关的适配都已固化在 `pnpm-workspace.yaml` 中，clone 之后走标准流程即可：
 
@@ -59,7 +61,7 @@ Web UI 监听在 `http://127.0.0.1:3080`，并且**只响应环回地址**（见
 #### 前置依赖
 
 ```sh
-pkg install node24 npm-node24 gmake python3 pkgconf
+pkg install node24 npm-node24 gmake python3 pkgconf bash
 ```
 
 本仓库通过 `packageManager` 钉死 `pnpm@11.7.0`，而 FreeBSD ports 里的 `pnpm`
@@ -74,6 +76,17 @@ export PATH="$HOME/.pnpm-home/node_modules/.bin:$PATH"
 
 `corepack enable` 是常见替代方案，但非 root 用户会因向 `/usr/local/bin` 写 shim
 而报 `EACCES`。
+
+`bash` 是**硬依赖**（即便它**不**属于 FreeBSD 默认安装，base 交互 shell 是
+`/bin/sh`，一个 ash 衍生版）。`terminal-bash` 后端——被 `code` 和 `mini` agent
+模式使用——依赖 bash 专有行为：`PROMPT_COMMAND` 输出每命令结束的 OSC `133;D;`
+标记，harness 据此判断命令结束与退出码；默认 shell 参数 `--noprofile --norc -i`
+也是 bash 专有。base 的 `/bin/sh` 无法替代；若缺 bash，服务会报
+`PTY shell exited during startup`（或在该后端自带校验下给出清晰的
+`terminal-bash: ... does not exist` 提示）。若你的镜像漏装了 bash，从 ports 装：
+`cd /usr/ports/shells/bash && make install clean`。仓库已在
+`packages/terminal/terminal-bash/src/config.ts` 加了校验：shellPath 不存在 / 非
+bash会直接报清晰错误，而不再静默回退到不存在的路径。
 
 `node-pty` 在 `pnpm install` 期间会编译原生插件，而 `node-gyp` 需要把 GNU make
 当作 `make` 调用——FreeBSD 的 `/usr/bin/make` 是 BSD make。在 `PATH` 前面放一个 shim：

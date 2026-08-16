@@ -40,6 +40,8 @@ pnpm dsh web
 > **Use this fork for FreeBSD — not yet merged upstream.** The FreeBSD port (the `process-inspector` ps-syntax fix, the `terminal-bash` default-shell fix, the `crypto.randomUUID` polyfill, and the loopback-only trust fence) is **maintained in this repository** and has **not been merged into upstream `deepseek-ai/deepseek-harness`**. Clone **this repository** (not upstream) until that merge lands, or the FreeBSD fixes will be missing.
 > Mirror: `https://github.com/skywalk163/deepseek-harness.git`
 
+> **Full step-by-step installation runbook:** See [FREEBSD.md](FREEBSD.md) for a complete, copy-paste install guide — prerequisites, the `@pnpm/exe.freebsd-x64` pitfall, gmake shim, bash dependency, loopback fence, service/rc.d, git remotes, and a troubleshooting table.
+
 DeepSeek Harness runs on FreeBSD (verified on FreeBSD 14.3-RELEASE amd64 with
 Node 24). Every FreeBSD-specific adjustment is already committed to
 `pnpm-workspace.yaml`, so the standard flow works right after cloning:
