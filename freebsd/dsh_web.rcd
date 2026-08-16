@@ -1,0 +1,31 @@
+#!/bin/sh
+# dsh_web -- DeepSeek harness (dsh) web UI service
+# PROVIDE: dsh_web
+# REQUIRE: NETWORKING
+# KEYWORD: shutdown
+
+. /etc/rc.subr
+
+name="dsh_web"
+rcvar="dsh_web_enable"
+
+load_rc_config $name
+
+: ${dsh_web_enable:="NO"}
+: ${dsh_web_chdir:=""}
+: ${dsh_web_user:="workbuddy"}
+: ${dsh_web_log:="${dsh_web_chdir}/dsh_web.log"}
+
+pidfile="${dsh_web_chdir}/dsh_web.pid"
+command="/usr/sbin/daemon"
+command_args="-P ${pidfile} -o ${dsh_web_log} /bin/sh ${dsh_web_chdir}/freebsd/dsh-web-run.sh"
+required_dirs="${dsh_web_chdir}"
+
+# Fail fast with a clear message if the repo path is unset.
+if [ -z "$dsh_web_chdir" ]; then
+    echo "dsh_web: dsh_web_chdir is not set." >&2
+    echo "Run:  sysrc dsh_web_chdir=\"\$(pwd)\"   (from inside the repo)" >&2
+    exit 1
+fi
+
+run_rc_command "$1"

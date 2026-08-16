@@ -192,39 +192,46 @@ VPN), not a reverse proxy that keeps the client `Host`.
 
 #### Running as a service (restart script + rc.d)
 
-Two helper scripts live in the `workbuddy` home on the test host (adapt the
-paths for your own user):
+The helper scripts now ship **inside the repo** under `freebsd/` and resolve every
+path relative to their own location, so they work no matter where you cloned the
+repo (no editing required):
 
-- `/home/workbuddy/dsh-web-run.sh` -- launcher: sets `DSH_PERMISSION_MODE`,
-  `cd`s into the repo, and `exec`s `pnpm dsh:freebsd web`.
-- `/home/workbuddy/dsh-web-restart.sh` -- one-shot control:
+- `freebsd/dsh-web-run.sh` -- launcher: sets `DSH_PERMISSION_MODE`, `cd`s into the
+  repo root, and `exec`s `pnpm dsh:freebsd web`.
+- `freebsd/dsh-web-restart.sh` -- one-shot control:
   `stop | start | restart | status` (default `restart`).
+- `freebsd/dsh_web.rcd` -- rc.d service template.
+
+Run the service directly (no root needed):
 
 ```sh
-sh /home/workbuddy/dsh-web-restart.sh restart   # also: stop / start / status
+sh freebsd/dsh-web-restart.sh restart   # also: stop / start / status
 ```
 
-For boot-time autostart, install the rc.d service (needs root):
+For boot-time autostart, copy the rc.d template and point it at this repo. The
+`$(pwd)` fills the path for you -- run it from the repo root:
 
 ```sh
 su - root
-cp /home/workbuddy/dsh_web.rcd /usr/local/etc/rc.d/dsh_web
+cp freebsd/dsh_web.rcd /usr/local/etc/rc.d/dsh_web
 chmod 555 /usr/local/etc/rc.d/dsh_web
 sysrc dsh_web_enable=YES
-service dsh_web start        # verify
+sysrc dsh_web_chdir="$(pwd)"     # repo path, auto-filled; run this in the repo
+sysrc dsh_web_user=workbuddy     # change if your account is not "workbuddy"
+service dsh_web start            # verify
 service dsh_web status
 ```
 
 Notes:
 
-- `pnpm` is persisted at `/home/workbuddy/.local/bin/pnpm` (v11.7.0, matching the
-  repo's `packageManager`). Do **not** rely on a `/tmp/p117`-style path -- `/tmp`
-  is cleared on reboot and the service would fail to start.
-- The rc.d `pidfile` and log live under the home directory
-  (`/home/workbuddy/dsh_web.pid`, `/home/workbuddy/dsh_web.log`) so they survive
-  reboots and `/tmp` cleanup.
-- The rc.d service runs as the `workbuddy` user; change `dsh_web_user` if you
-  installed elsewhere.
+- `pnpm` is resolved from `PATH` (install via `npm install -g pnpm@11.7.0` as
+  described above). Do **not** rely on a `/tmp/p117`-style path -- `/tmp` is
+  cleared on reboot and the service would fail to start.
+- The `pidfile` and log are written **inside the repo**
+  (`<repo>/dsh_web.pid`, `<repo>/dsh_web.log`) so they survive reboots and `/tmp`
+  cleanup, and travel with the checkout.
+- The rc.d service runs as the `dsh_web_user` you set; that user must own the repo
+  directory so it can write the pidfile/log and read `node_modules`.
 
 #### Troubleshooting / known FreeBSD pitfalls
 

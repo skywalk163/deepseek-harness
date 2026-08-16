@@ -175,36 +175,43 @@ harness 把所有 host 侧的文件系统 RPC——包括"选择工作区目录"
 
 #### 作为服务运行（重启脚本 + rc.d）
 
-测试机上 `workbuddy` 家目录下有两个辅助脚本（请按你自己的用户调整路径）：
+辅助脚本现在**随仓库一起提供**，位于 `freebsd/` 子目录下，所有路径都相对于脚本自身
+所在位置解析，因此无论仓库 clone 到哪里都能直接用（无需改路径）：
 
-- `/home/workbuddy/dsh-web-run.sh`——启动器：设置 `DSH_PERMISSION_MODE`、进入仓库目录、
+- `freebsd/dsh-web-run.sh`——启动器：设置 `DSH_PERMISSION_MODE`、进入仓库根目录、
   `exec` `pnpm dsh:freebsd web`。
-- `/home/workbuddy/dsh-web-restart.sh`——一键控制：`stop | start | restart | status`
+- `freebsd/dsh-web-restart.sh`——一键控制：`stop | start | restart | status`
   （默认 `restart`）。
+- `freebsd/dsh_web.rcd`——rc.d 服务模板。
+
+直接拉起服务（无需 root）：
 
 ```sh
-sh /home/workbuddy/dsh-web-restart.sh restart   # 也可：stop / start / status
+sh freebsd/dsh-web-restart.sh restart   # 也可：stop / start / status
 ```
 
-如需开机自启，安装 rc.d 服务（需 root）：
+如需开机自启，复制 rc.d 模板并指向本仓库即可。`$(pwd)` 会自动填入路径——在仓库根目录
+下执行：
 
 ```sh
 su - root
-cp /home/workbuddy/dsh_web.rcd /usr/local/etc/rc.d/dsh_web
+cp freebsd/dsh_web.rcd /usr/local/etc/rc.d/dsh_web
 chmod 555 /usr/local/etc/rc.d/dsh_web
 sysrc dsh_web_enable=YES
-service dsh_web start        # 验证
+sysrc dsh_web_chdir="$(pwd)"        # 仓库路径，自动填入；在仓库内执行本行
+sysrc dsh_web_user=workbuddy        # 若你的账号不是 workbuddy 请改掉
+service dsh_web start               # 验证
 service dsh_web status
 ```
 
 注意：
 
-- `pnpm` 已持久化到 `/home/workbuddy/.local/bin/pnpm`（v11.7.0，与仓库 `packageManager`
-  一致）。**不要**依赖 `/tmp/p117` 这类路径——重启会清空 `/tmp`，服务将启动失败。
-- rc.d 的 `pidfile` 与日志都在家目录下
-  （`/home/workbuddy/dsh_web.pid`、`/home/workbuddy/dsh_web.log`），以熬过重启与 `/tmp`
-  清理。
-- rc.d 服务以 `workbuddy` 用户运行；若装到别处请改 `dsh_web_user`。
+- `pnpm` 从 `PATH` 中解析（按上文 `npm install -g pnpm@11.7.0` 安装即可）。**不要**
+  依赖 `/tmp/p117` 这类路径——重启会清空 `/tmp`，服务将启动失败。
+- `pidfile` 与日志写在**仓库内部**（`/<仓库>/dsh_web.pid`、`<仓库>/dsh_web.log`），
+  能熬过重启与 `/tmp` 清理，并随仓库一起移动。
+- rc.d 服务以你设置的 `dsh_web_user` 运行；该用户必须拥有仓库目录，才能写 pidfile/日志
+  并读取 `node_modules`。
 
 #### 排错 / FreeBSD 已知踩坑
 
