@@ -870,7 +870,7 @@ function main(): void {
     console.error(`gen-config-catalog: ${OUT} is stale. Run \`pnpm run gen-config-catalog\` and commit ${OUT}.`)
     process.exit(1)
   }
-  writeFileSync(resolve(root, OUT), content)
+  writeFileSync(resolve(root, OUT), content.replace(/\r\n/g, '\n').replace(/\r/g, '\n'))
   console.log(`gen-config-catalog: wrote ${OUT}.`)
 }
 

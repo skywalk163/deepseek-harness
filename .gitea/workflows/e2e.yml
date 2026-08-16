@@ -15,11 +15,12 @@
 
 name: E2E (real DeepSeek API) — FreeBSD
 
+# Only manual / scheduled runs. DEEPSEEK_API_KEY is a repository secret that is
+# not wired into this self-hosted Gitea instance, so a push/pull_request trigger
+# would hard-fail the preflight on every run (the upstream "fail loudly on a
+# missing key" guard). Opt in via workflow_dispatch or the nightly schedule.
 on:
   workflow_dispatch:
-  push:
-    branches: [main, master]
-  pull_request:
   schedule:
     - cron: '17 0 * * *'
 

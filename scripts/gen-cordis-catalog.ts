@@ -932,7 +932,7 @@ export function main(): void {
     const destination = resolve(root, out)
     if (before.get(out)?.toString('utf8') === content) continue
     mkdirSync(dirname(destination), { recursive: true })
-    writeFileSync(destination, content)
+    writeFileSync(destination, content.replace(/\r\n/g, '\n').replace(/\r/g, '\n'))
     changedPages++
   }
   for (const page of [...new Set([...Object.values(SERVICE_PAGE), ...Object.values(EVENT_SCOPE_PAGE)])]) {
