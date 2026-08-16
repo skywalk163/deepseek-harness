@@ -20,6 +20,8 @@
  */
 
 import { isAbsolute, relative, sep } from 'node:path'
+import { existsSync } from 'node:fs'
+import { execSync } from 'node:child_process'
 import type { Context } from '@deepseek-ai/cordis'
 import { HarnessError } from '@deepseek-ai/dsh-llm'
 import { ItemRetainer, TextRetainer } from '@deepseek-ai/dsh-output-retention'
@@ -156,7 +158,7 @@ function completeStdout(toolName: string, stdout: SubprocessOutputRead, rawOutpu
 let rgPathPromise: Promise<string> | undefined
 
 /**
- * The packaged ripgrep binary path, resolved lazily once per process.
+ * The ripgrep binary path, resolved lazily once per process.
  *
  * `@vscode/ripgrep` resolves its platform package (`@vscode/ripgrep-<platform>
  * -<arch>`) at module evaluation, so a static import would turn a missing or
@@ -165,11 +167,37 @@ let rgPathPromise: Promise<string> | undefined
  * boundary keeps that failure at the first search call as `SEARCH_FAILED` —
  * the package's documented no-load-time-probe contract.
  *
- * @returns the packaged binary's absolute path; the memoized promise rejects
- *   when the platform package cannot be resolved.
+ * Resolution order (so the grep/glob tools also work on platforms — notably
+ * FreeBSD — where `@vscode/ripgrep` ships no native binary):
+ *   1. `DSH_RIPGREP_PATH` env override (explicit, e.g. a system ripgrep);
+ *   2. the packaged `@vscode/ripgrep` binary, only when the file exists;
+ *   3. a system `rg` discovered on `PATH` (`pkg install ripgrep` on FreeBSD);
+ *   4. the packaged path even if missing — lets spawn surface `SEARCH_FAILED`
+ *      as before when nothing usable is available.
+ *
+ * @returns the chosen binary's absolute path; the memoized promise rejects
+ *   when no platform package can be resolved and none of the fallbacks exist.
  */
 export function resolveRgPath(): Promise<string> {
-  rgPathPromise ??= import('@vscode/ripgrep').then(module => module.rgPath)
+  rgPathPromise ??= (async (): Promise<string> => {
+    const override = process.env.DSH_RIPGREP_PATH
+    if (override !== undefined && existsSync(override)) return override
+    try {
+      const packaged = (await import('@vscode/ripgrep')).rgPath
+      if (packaged !== undefined && existsSync(packaged)) return packaged
+    } catch {
+      // No platform package (e.g. FreeBSD) — fall through to a system binary.
+    }
+    try {
+      const onPath = execSync('command -v rg || which rg', { encoding: 'utf8' }).trim()
+      if (onPath.length > 0) return onPath
+    } catch {
+      // No system rg on PATH.
+    }
+    // Reject with the (possibly missing) packaged path so spawn reports the
+    // original SEARCH_FAILED instead of an obscure undefined-path error.
+    return (await import('@vscode/ripgrep')).rgPath
+  })()
   return rgPathPromise
 }
 

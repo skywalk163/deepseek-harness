@@ -19,7 +19,7 @@ This runbook strings every step from "fresh FreeBSD" to "`dsh web` running" into
 
 ```sh
 pkg update
-pkg install -y node24 npm-node24 gmake python3 pkgconf bash
+pkg install -y node24 npm-node24 gmake python3 pkgconf bash ripgrep
 ```
 
 | Package | Purpose |
@@ -30,6 +30,7 @@ pkg install -y node24 npm-node24 gmake python3 pkgconf bash
 | `python3` | used to compile `node-pty` (3.11 / 3.12 both verified) |
 | `pkgconf` | node-gyp / Node-header probing |
 | `bash` | **hard dependency**, see step 4; not installed by default on FreeBSD |
+| `ripgrep` | provides the system `rg` binary used by the `grep` / `glob` tools as a fallback when the bundled `@vscode/ripgrep` has no FreeBSD native binary (see step 9 and the troubleshooting table) |
 
 Verify versions:
 
@@ -190,6 +191,8 @@ pnpm run build     # = build:lib (tsc -b + tsdown) + build:web (vite)
 DSH_PERMISSION_MODE=danger-full-access pnpm dsh:freebsd web
 ```
 
+- **Default working directory.** The harness routes every `bash` / `grep` / terminal command's cwd through `session.header.cwd`, which falls back to `process.cwd()` (the directory this command runs in) when the web UI does not set a per-task project directory. If you launch from the repo root, commands default to the repo — set the project explicitly with the `DSH_PROJECT_DIR` env var (the `freebsd/dsh-web-run.sh` launcher honors it; otherwise `cd` into your project before launching). Until the web fork wires the task "项目目录" field into `header.cwd`, this is the dependable way to make your project the default working directory.
+
 - `dsh:freebsd` = normal `dsh` + `--expose-internals`. On FreeBSD the HMR service requires that flag, and it **cannot** be passed via `NODE_OPTIONS` (`node-addon-require-builtin` only ships darwin/linux/win32 prebuilds; no FreeBSD native package and no source fallback).
 - **`DSH_PERMISSION_MODE=danger-full-access` is MANDATORY on FreeBSD.** The harness ships no FreeBSD sandbox backend — confinement knows only Linux bwrap/Landlock, macOS Seatbelt, and the Windows ACL restricted-token runner. Any *confined* mode (`read-only` / `workspace-write`) therefore **fails closed** and refuses to run the command unconfined. This variable runs the agent **unconfined**, which is the only supported way to operate on FreeBSD today. Only do it on a machine you are willing to let the agent modify.
 - ⚠️ **`code` / `mini` modes are exactly where this bites.** They drive a persistent PTY bash session through the *sandbox-confined* bash executor. If a session is **not** in `danger-full-access` (you left the web default `workspace-write`, or a stored UI permission preset is `workspace-write`), every `bash`/`ls`/file command aborts with:
@@ -223,22 +226,25 @@ On the FreeBSD box itself just open `http://127.0.0.1:3080`.
 
 ## 11. Running as a service (restart script + rc.d)
 
-On the test host there are helper scripts under `workbuddy`'s home (adapt paths for your own user):
+The repo ships path-independent helper scripts under `freebsd/` (they resolve the repo root from their own location, so clone anywhere). For a custom project directory, set `DSH_PROJECT_DIR` in the service env (see below) — the launcher `cd`s into it before starting, making it the default working directory for all commands.
 
-- `/home/workbuddy/dsh-web-run.sh` — launcher: sets `DSH_PERMISSION_MODE`, `cd`s into the repo, and `exec`s `pnpm dsh:freebsd web`.
-- `/home/workbuddy/dsh-web-restart.sh` — one-shot control: `stop | start | restart | status` (default `restart`).
+- `freebsd/dsh-web-run.sh` — launcher: sets `DSH_PERMISSION_MODE`, `cd`s into `DSH_PROJECT_DIR` (default repo root), and `exec`s `pnpm dsh:freebsd web`.
+- `freebsd/dsh-web-restart.sh` — one-shot control: `stop | start | restart | status` (default `restart`).
 
 ```sh
-sh /home/workbuddy/dsh-web-restart.sh restart   # also: stop / start / status
+sh freebsd/dsh-web-restart.sh restart   # also: stop / start / status
+DSH_PROJECT_DIR=/home/skywalk/dswork sh freebsd/dsh-web-restart.sh restart   # with a project dir
 ```
 
 For boot-time autostart (needs root):
 
 ```sh
 su - root
-cp /home/workbuddy/dsh_web.rcd /usr/local/etc/rc.d/dsh_web
+cp freebsd/dsh_web.rcd /usr/local/etc/rc.d/dsh_web
 chmod 555 /usr/local/etc/rc.d/dsh_web
 sysrc dsh_web_enable=YES
+sysrc dsh_web_chdir="$(pwd)"          # repo absolute path, filled automatically
+sysrc dsh_web_projectdir="/home/skywalk/dswork"   # optional: default project dir
 service dsh_web start        # verify
 service dsh_web status
 ```
@@ -246,8 +252,8 @@ service dsh_web status
 Notes:
 
 - `pnpm` must be persisted (on this box at `/home/<user>/.local/bin/pnpm` v11.7.0); do not rely on a `/tmp/p117`-style path that `/tmp` cleanup would wipe on reboot.
-- The rc.d `pidfile` and log live under the home directory (`/home/workbuddy/dsh_web.pid`, `/home/workbuddy/dsh_web.log`) so they survive reboots and `/tmp` cleanup.
-- The rc.d service runs as the `workbuddy` user; change `dsh_web_user` if you installed elsewhere.
+- The rc.d `pidfile` and log live inside the repo (`dsh_web.pid`, `dsh_web.log`) so they survive reboots and `/tmp` cleanup.
+- The rc.d service runs as the `dsh_web_user` (default `workbuddy`); change via `sysrc dsh_web_user=...` if you installed elsewhere.
 
 ---
 
@@ -287,6 +293,8 @@ git -c core.hooksPath=/tmp/nohooks push <remote> <branch>
 | `node-pty` build fails / ETIMEDOUT fetching Node headers | node-gyp cannot reach headers | Keep `disturl=https://registry.npmmirror.com/-/binary/node` in `.npmrc`; ensure the gmake shim is on `PATH`. |
 | `PTY shell exited during startup` / `terminal-bash: ... does not exist` | `bash` not installed (FreeBSD ships `/bin/sh`, not bash) | `pkg install bash`; the backend cannot use the default `/bin/sh`. |
 | `gen-third-party-notices` hook fails on commit/push | upstream hook needs Linux-only claude-agent-sdk | FreeBSD platform incompatibility, unrelated to your change. Bypass with `git commit --no-verify` or `git -c core.hooksPath=/tmp/nohooks push`. |
+| `grep` / `glob` fail with `could not start its search command (ripgrep launch failed)` | `@vscode/ripgrep` ships no FreeBSD native binary, so its `rgPath` points at a missing file | `pkg install ripgrep`, then the `grep`/`glob` tools auto-fall-back to the system `rg` (or set `DSH_RIPGREP_PATH` to your `rg`). Fixed in code at `packages/fs/tool-fs-search/src/search-core.ts`. |
+| `bash` / `grep` run in `$HOME` (or the repo root) instead of the project you set in the task | the web fork does not yet wire the task "项目目录" field into `session.header.cwd`; the command cwd falls back to `process.cwd()` (where `dsh web` was launched) | set the project explicitly: launch with `DSH_PROJECT_DIR=/path/to/project`, or in the rc.d service `sysrc dsh_web_projectdir="/path/to/project"`. The `freebsd/dsh-web-run.sh` launcher `cd`s into it. |
 
 ---
 

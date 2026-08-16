@@ -14,10 +14,16 @@ load_rc_config $name
 : ${dsh_web_enable:="NO"}
 : ${dsh_web_chdir:=""}
 : ${dsh_web_user:="workbuddy"}
+: ${dsh_web_projectdir:=""}
 : ${dsh_web_log:="${dsh_web_chdir}/dsh_web.log"}
 
 pidfile="${dsh_web_chdir}/dsh_web.pid"
 command="/usr/sbin/daemon"
+# Export the optional project directory so the launcher cds into it (becomes
+# the default working directory for all bash/grep/terminal commands).
+if [ -n "$dsh_web_projectdir" ]; then
+    export DSH_PROJECT_DIR="$dsh_web_projectdir"
+fi
 command_args="-P ${pidfile} -o ${dsh_web_log} /bin/sh ${dsh_web_chdir}/freebsd/dsh-web-run.sh"
 required_dirs="${dsh_web_chdir}"
 

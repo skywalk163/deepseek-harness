@@ -19,7 +19,7 @@
 
 ```sh
 pkg update
-pkg install -y node24 npm-node24 gmake python3 pkgconf bash
+pkg install -y node24 npm-node24 gmake python3 pkgconf bash ripgrep
 ```
 
 | 包 | 作用 |
@@ -30,6 +30,7 @@ pkg install -y node24 npm-node24 gmake python3 pkgconf bash
 | `python3` | `node-pty` 编译用（验证 3.11 / 3.12 均可） |
 | `pkgconf` | node-gyp / Node 头文件探测 |
 | `bash` | **硬依赖**，见第 4 步，FreeBSD 默认不装 |
+| `ripgrep` | 提供系统 `rg` 二进制；当随包自带的 `@vscode/ripgrep` 在 FreeBSD 无原生二进制时，`grep` / `glob` 工具会回退到它（见第 9 步与排错表） |
 
 验证版本：
 
@@ -190,6 +191,8 @@ pnpm run build     # 等价于 build:lib (tsc -b + tsdown) + build:web (vite)
 DSH_PERMISSION_MODE=danger-full-access pnpm dsh:freebsd web
 ```
 
+- **默认工作目录。** harness 把每条 `bash` / `grep` / 终端命令的 cwd 都走 `session.header.cwd`，当 Web UI 没有设置"每任务项目目录"时，它会回退到 `process.cwd()`（即本命令所在目录）。若从仓库根启动，命令默认就在仓库里——想指定项目，用 `DSH_PROJECT_DIR` 环境变量（`freebsd/dsh-web-run.sh` 启动器认这个变量；否则启动前先 `cd` 进你的项目）。在本 fork 把任务"项目目录"字段接进 `header.cwd` 之前，这是让项目成为默认工作目录的可靠办法。
+
 - `dsh:freebsd` = 普通 `dsh` + `--expose-internals`。FreeBSD 上 HMR 服务必须该 flag，且**不能**经 `NODE_OPTIONS` 传（`node-addon-require-builtin` 只发布 darwin/linux/win32 预编译，FreeBSD 无原生包也无源码兜底）。
 - **`DSH_PERMISSION_MODE=danger-full-access` 在 FreeBSD 上是必选项。** harness 不发行 FreeBSD 沙箱后端——confinement 只认识 Linux 的 bwrap/Landlock、macOS 的 Seatbelt、以及 Windows 的 ACL 受限令牌 runner。任何**受限**模式（`read-only` / `workspace-write`）都会**fail-closed** 并拒绝以非隔离方式运行命令。该变量让 agent 以**非隔离**方式运行，这是 FreeBSD 上目前唯一受支持的运作方式。**只在你愿意让 agent 修改的机器上这样跑。**
 - ⚠️ **`code` / `mini` 模式恰恰栽在这里。** 它们把持久 PTY bash 会话经由*受沙箱约束的* bash executor 驱动。若某会话**未**处于 `danger-full-access`（你保留着 Web 默认的 `workspace-write`，或存储的 UI 权限预设是 `workspace-write`），每条 `bash`/`ls`/文件命令都会中止并报：
@@ -223,22 +226,25 @@ ssh -L 3080:127.0.0.1:3080 <user>@<freebsd-host>
 
 ## 11. 作为服务运行（重启用脚本 + rc.d）
 
-测试机上 helper 脚本（换成你自己的用户路径）：
+仓库自带路径无关的 helper 脚本（`freebsd/` 子目录，按自身位置推导仓库根，clone 到哪都行）。要自定义项目目录，在服务 env 里设 `DSH_PROJECT_DIR`（见下）——启动器会先 `cd` 进去，成为所有命令的默认工作目录。
 
-- `/home/workbuddy/dsh-web-run.sh`——启动器：设 `DSH_PERMISSION_MODE`、cd 进仓库、`exec pnpm dsh:freebsd web`。
-- `/home/workbuddy/dsh-web-restart.sh`——一键控制：`stop | start | restart | status`（默认 `restart`）。
+- `freebsd/dsh-web-run.sh`——启动器：设 `DSH_PERMISSION_MODE`、cd 进 `DSH_PROJECT_DIR`（默认仓库根）、`exec pnpm dsh:freebsd web`。
+- `freebsd/dsh-web-restart.sh`——一键控制：`stop | start | restart | status`（默认 `restart`）。
 
 ```sh
-sh /home/workbuddy/dsh-web-restart.sh restart   # 也可：stop / start / status
+sh freebsd/dsh-web-restart.sh restart   # 也可：stop / start / status
+DSH_PROJECT_DIR=/home/skywalk/dswork sh freebsd/dsh-web-restart.sh restart   # 指定项目目录
 ```
 
 开机自启（需 root）：
 
 ```sh
 su - root
-cp /home/workbuddy/dsh_web.rcd /usr/local/etc/rc.d/dsh_web
+cp freebsd/dsh_web.rcd /usr/local/etc/rc.d/dsh_web
 chmod 555 /usr/local/etc/rc.d/dsh_web
 sysrc dsh_web_enable=YES
+sysrc dsh_web_chdir="$(pwd)"          # 仓库绝对路径，自动填入
+sysrc dsh_web_projectdir="/home/skywalk/dswork"   # 可选：默认项目目录
 service dsh_web start        # 验证
 service dsh_web status
 ```
@@ -246,8 +252,8 @@ service dsh_web status
 注意：
 
 - `pnpm` 要持久化（本机在 `/home/workbuddy/.local/bin/pnpm` v11.7.0），别用 `/tmp/p117` 这类重启会被清的路径。
-- rc.d 的 `pidfile` 与日志放在 home（`/home/workbuddy/dsh_web.pid`、`/home/workbuddy/dsh_web.log`）以避开 `/tmp` 清理、重启不丢。
-- rc.d 服务以 `workbuddy` 用户运行；装到别处请改 `dsh_web_user`。
+- rc.d 的 `pidfile` 与日志放在仓库内（`dsh_web.pid`、`dsh_web.log`）以避开 `/tmp` 清理、重启不丢。
+- rc.d 服务以 `dsh_web_user`（默认 `workbuddy`）运行；装到别处用 `sysrc dsh_web_user=...` 改。
 
 ---
 
@@ -287,6 +293,8 @@ git -c core.hooksPath=/tmp/nohooks push <remote> <branch>
 | `node-pty` 编译失败 / ETIMEDOUT 拉 Node 头文件 | node-gyp 拉不到头文件 | 保留 `.npmrc` 的 `disturl`；确保 gmake shim 在 `PATH`。 |
 | `PTY shell exited during startup` / `terminal-bash: ... does not exist` | 没装 bash（FreeBSD 默认 `/bin/sh`） | `pkg install bash`；该后端不能用默认 sh。 |
 | `gen-third-party-notices` 钩子 commit / push 失败 | 上游钩子要 Linux-only 的 claude-agent-sdk | FreeBSD 平台不兼容，与改动无关；`git commit --no-verify` 或 `git -c core.hooksPath=/tmp/nohooks push`。 |
+| `grep` / `glob` 报 `could not start its search command (ripgrep launch failed)` | `@vscode/ripgrep` 在 FreeBSD 无原生二进制，其 `rgPath` 指向缺失文件 | `pkg install ripgrep`，`grep`/`glob` 工具会自动回退到系统 `rg`（或设 `DSH_RIPGREP_PATH` 指向你的 `rg`）。代码修复在 `packages/fs/tool-fs-search/src/search-core.ts`。 |
+| `bash` / `grep` 落在 `$HOME`（或仓库根）而非任务里设的项目目录 | 本 fork 尚未把任务的"项目目录"字段接进 `session.header.cwd`，命令 cwd 回退到 `process.cwd()`（即 `dsh web` 启动目录） | 显式指定项目：启动加 `DSH_PROJECT_DIR=/项目路径`，或在 rc.d 服务里 `sysrc dsh_web_projectdir="/项目路径"`。`freebsd/dsh-web-run.sh` 启动器会 cd 进去。 |
 
 ---
 
