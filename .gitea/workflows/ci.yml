@@ -4,10 +4,11 @@
 # actions, Wine/Windows legs and failover pools — none of which apply to the
 # FreeBSD host runner on this Gitea instance (fb5-freebsd, labels
 # freebsd/freebsd-14.3/self-hosted, host mode, no Docker). This port keeps the
-# signal that matters on FreeBSD: immutable install, a parallel build of the
-# host + client lib (then web), and the static gate aggregate. The host/client
-# lib build runs concurrently and its tsc -b outputs are cached on the build
-# host between runs to avoid rebuilding 230+ packages from scratch each time.
+# signal that matters on FreeBSD: immutable install, a memory-bounded build of
+# the host + client lib (then web), and the static gate aggregate. The host/
+# client lib build runs SERIALLY under `cpuset` (half the cores) so its tsc -b
+# outputs stay cacheable on the build host between runs instead of rebuilding
+# 230+ packages from scratch each time. See the Build step for the OOM rationale.
 #
 # NOTE: the web build resolves workspace packages through their `exports` map,
 # which points at built `lib/` output (e.g. @deepseek-ai/dsh-client-ui-theme/
@@ -84,8 +85,9 @@ jobs:
       # self-validating via .tsbuildinfo, so reusing across commits is safe; the
       # stamp (node/pnpm version + build-config hash) invalidates on toolchain or
       # build-script change. Without this every CI run rebuilds 230+ pkg lib from
-      # scratch (~15-20 min); a HIT drops unchanged trees to seconds. The parallel
-      # lib build below also roughly halves the lib phase vs the old serial one.
+      # scratch (~15-20 min); a HIT drops unchanged trees to seconds and — because
+      # tsc -b then skips unchanged packages — also uses far less memory than a
+      # full build (which is what makes the OOM below survivable on a MISS).
       - name: Restore build cache
         run: |
           set -eu
@@ -100,12 +102,28 @@ jobs:
             echo "::notice::build cache MISS — clean build"
           fi
 
-      - name: Build (parallel host + client lib, then web)
+      - name: Build (memory-bounded host + client lib, then web)
         run: |
           set -eu
-          pnpm run build:lib:host &
-          pnpm run build:lib:client &
-          wait
+          # OOM root cause: the runner is an 8 GB / 4-core box that ALSO runs
+          # `dsh web` (:3080). A default (all-core) `tsc -b` over the 230+ host
+          # packages blows past RAM and the kernel OOM-killer SIGKILLs it
+          # (exit 137). Two fixes:
+          #   1. Pin the build to the first half of the cores via `cpuset`
+          #      (usable by the non-root runner user). tsc -b's worker pool then
+          #      holds ~half the in-flight programs -> ~half the peak heap.
+          #   2. Build host + client lib SERIALLY (a previous parallel `&`/`wait`
+          #      doubled peak memory and made OOM *more* likely).
+          # The incremental cache above keeps HIT runs cheap and low-memory; this
+          # only matters on a cache MISS. If a MISS still OOMs, the durable fix is
+          # adding swap on the runner (e.g. `swapctl -a /swapfile`).
+          NCPU=$(sysctl -n hw.ncpu)
+          HALF=$(( NCPU / 2 ))
+          [ "$HALF" -lt 1 ] && HALF=1
+          MASK="0-$(( HALF - 1 ))"
+          echo "::notice::building with 'cpuset -l $MASK' (half of $NCPU cores) to bound tsc memory"
+          cpuset -l "$MASK" pnpm run build:lib:host
+          cpuset -l "$MASK" pnpm run build:lib:client
           pnpm run build:web
 
       - name: Save build cache
