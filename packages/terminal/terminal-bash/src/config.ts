@@ -1,12 +1,28 @@
 /** Validated configuration for the local PTY backend. */
 
 import z from '@deepseek-ai/schemastery'
+import { existsSync } from 'node:fs'
+
+/** Resolve the default interactive shell for the current platform. */
+function defaultShellPath(): string {
+  if (process.platform === 'freebsd') {
+    for (const candidate of ['/usr/local/bin/bash', '/bin/bash', '/usr/bin/bash']) {
+      try {
+        if (existsSync(candidate)) return candidate
+      } catch {
+        // ignore and try the next candidate
+      }
+    }
+    return '/usr/local/bin/bash'
+  }
+  return '/bin/bash'
+}
 
 /** Public plugin configuration. */
 export interface Config {
   /** Backend registry type (default: `shell`). */
   backendType?: string
-  /** Interactive shell executable (default: `/bin/bash`). */
+  /** Interactive shell executable (default: `/bin/bash` on Linux/macOS, `/usr/local/bin/bash` on FreeBSD). */
   shellPath?: string
   /** Shell arguments (default: `--noprofile --norc -i`). */
   shellArgs?: string[]
@@ -43,7 +59,7 @@ export type ResolvedConfig = Required<Config>
 /** Schemastery config exposed by the plugin. */
 export const Config: z<Config> = z.object({
   backendType: z.string().default('shell'),
-  shellPath: z.string().default('/bin/bash'),
+  shellPath: z.string().default(defaultShellPath()),
   shellArgs: z.array(z.string()).default(['--noprofile', '--norc', '-i']),
   rows: z.number().default(40),
   cols: z.number().default(160),
