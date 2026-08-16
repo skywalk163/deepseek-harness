@@ -229,6 +229,99 @@ sh /tmp/dsh-jail-test.sh   # drops to caller uid, cwd=/workspace, ro denies writ
 
 > For a detailed deployment & troubleshooting manual, see **`freebsd-sandbox.md`** (English) and **`freebsd-sandbox.zh.md`** (Chinese).
 
+---
+
+### 8.2 Deploying on a second machine — notes for fb98 (192.168.0.88)
+
+The steps above were verified on `192.168.1.5` (FreeBSD 14.3, repo at `/home/workbuddy/github/deepseek-harness`). The same procedure was replicated on a second box **fb98 / 192.168.0.88 (FreeBSD 15.1-RELEASE-p1)**. The differences and two extra pitfalls specific to that machine are recorded here so a second deployment is reproducible.
+
+**Environment differences from 192.168.1.5**
+
+| Item | 192.168.1.5 | fb98 / 192.168.0.88 |
+| --- | --- | --- |
+| Repo path / user | `/home/workbuddy/github/deepseek-harness` (workbuddy) | `/home/skywalk/github/deepseek-harness` (skywalk) |
+| FreeBSD | 14.3-RELEASE amd64 | 15.1-RELEASE-p1 amd64 |
+| `/usr` mount | **read-only** → binary in `/var/dsh-jail-run` | **writable**, but install binary to `/var/dsh-jail-run` anyway to match the repo scripts' default `DSH_JAIL_RUN_BIN` |
+| `kern.racct.enable` | `1` | `0` — **not a blocker** (see note below) |
+| `nullfs` / `tmpfs` | nullfs loaded, tmpfs built-in | same (nullfs loaded at runtime; tmpfs built into GENERIC) |
+
+> ⚠️ **`/tmp` is a `nosuid` ZFS dataset on both boxes** — never install the setuid `dsh-jail-run` there, or the setuid bit is ignored and the helper silently fails. Use `/var/dsh-jail-run` (or `/usr/local/sbin/dsh-jail-run` on a writable-`/usr` host).
+
+**Step 0 — bring the repo up to the sandbox commit**
+
+On fb98 the repo was an *old* checkout with **no** FreeBSD jail sandbox code (`freebsd/dsh-jail-run.c`, `packages/sandbox/sandbox-local/`, `packages/sandbox/sandbox/` were all missing). Align it to `origin/master` first:
+
+```sh
+cd /home/skywalk/github/deepseek-harness
+git fetch origin
+git reset --hard origin/master     # now 9d1a0a6097, includes the jail sandbox + this runbook
+git log --oneline -1               # 9d1a0a6097 ...
+ls freebsd/dsh-jail-run.c packages/sandbox/sandbox-local/src   # must exist
+```
+
+**Pitfall A — `pnpm build:lib` (host) aborts on a broken test file**
+
+`pnpm run build` / `pnpm build:lib:host` runs `tsc -b` over every package **including** `packages/sandbox/sandbox-local/tests/**`. On `origin/master`, `packages/sandbox/sandbox-local/tests/boxrun.e2e.ts` still imports `boxrunProfileArgs` from `profiles.ts`, but that symbol was **removed** (TS2305). `tsc -b` aborts, so the `lib/` for `@deepseek-ai/dsh-sandbox-local` is **never produced** — and the stale `lib/` from an earlier boxrun-era build will wrongly select `/usr/local/sbin/boxrun` instead of `dsh-jail-run`.
+
+Symptom:
+
+```
+packages/sandbox/sandbox-local/tests/boxrun.e2e.ts:8:10
+  error TS2305: Module '.../profiles' has no exported member 'boxrunProfileArgs'.
+```
+
+Fix — temporarily move the offending test out, build, then restore it (the test file is not part of the `lib` output, so this changes no shipped code):
+
+```sh
+mv packages/sandbox/sandbox-local/tests/boxrun.e2e.ts /tmp/boxrun.e2e.ts.bak
+pnpm build:lib:host           # tsc -b + tsdown → lib/ produced
+# restore:
+mv /tmp/boxrun.e2e.ts.bak packages/sandbox/sandbox-local/tests/boxrun.e2e.ts
+```
+
+> If `git checkout -- <file>` reports "not known to git", the test file is untracked (e.g. gitignored) — restore it from `/tmp` instead, as shown. The repo working tree stays clean.
+
+Verify the rebuild actually selects the jail backend (not boxrun):
+
+```sh
+DSH_JAIL_RUN_BIN=/var/dsh-jail-run node freebsd/verify-sandbox.mjs
+# PASS=10 FAIL=0  (selected backend line shows dsh-jail-run, not boxrun)
+```
+
+> **`kern.racct.enable: 0` is fine.** `freebsd/dsh-jail-run.c` applies rctl resource limits with `rctl -a ... 2>/dev/null` (errors ignored), so the absence of RACCT/RCTL accounting does not block the jail — the backend still runs. Do not treat `kern.racct.enable: 0` as a failure.
+
+**Pitfall B — rc.d starts but the app hits `EACCES: /.dsh` (missing `$HOME`)**
+
+When started manually via `su skywalk -c '...'` the session inherits `HOME=/home/skywalk` and the web starts fine. But the **rc.d service** launches the command with an **empty `$HOME`** (defaults to `/`), so the harness tries to `mkdir /.dsh/profiles/node_modules` and dies with:
+
+```
+Error: EACCES: permission denied, mkdir '/.dsh/profiles/node_modules'
+```
+
+Fix — tell rc.d the home directory in `rc.conf`:
+
+```sh
+sysrc dsh_web_env="HOME=/home/skywalk"    # added alongside dsh_web_enable=YES etc.
+service dsh_web restart
+```
+
+After this, `service dsh_web start` (the boot path) works and the running process shows `HOME=/home/skywalk`.
+
+> ⚠️ Any `service dsh_web ...` / `daemon` invocation that leaves a long-lived process will **swallow the SSH helper's command output** (the shell returns before the daemon detaches). Always verify the result with a **separate** status check (`pgrep -f dsh:freebsd`, `fetch -qo - http://127.0.0.1:3080`, count `SANDBOX_UNAVAILABLE` in the log) rather than trusting the start command's stdout.
+
+**Final verified state on fb98**
+
+| Check | Result |
+| --- | --- |
+| setuid helper `/var/dsh-jail-run` | `-rwsr-xr-x root:wheel`, `pwd` inside jail → `/workspace` |
+| `freebsd/verify-sandbox.mjs` | PASS=10 FAIL=0 |
+| `pnpm vitest run packages/sandbox/sandbox-local/tests/freebsd-jail.e2e.ts` | 5/5 |
+| web (`:3080`) | HTTP 200, `DSH_JAIL_RUN_BIN=/var/dsh-jail-run`, no `danger-full-access` (default jail-confined) |
+| `SANDBOX_UNAVAILABLE` in log | 0 |
+| rc.d boot autostart | `dsh_web_enable=YES` + `dsh_web_env="HOME=/home/skywalk"` |
+
+---
+
 ## 9. Run the Web UI
 
 ```sh
@@ -340,6 +433,8 @@ git -c core.hooksPath=/tmp/nohooks push <remote> <branch>
 | `gen-third-party-notices` hook fails on commit/push | upstream hook needs Linux-only claude-agent-sdk | FreeBSD platform incompatibility, unrelated to your change. Bypass with `git commit --no-verify` or `git -c core.hooksPath=/tmp/nohooks push`. |
 | `grep` / `glob` fail with `could not start its search command (ripgrep launch failed)` | `@vscode/ripgrep` ships no FreeBSD native binary, so its `rgPath` points at a missing file | `pkg install ripgrep`, then the `grep`/`glob` tools auto-fall-back to the system `rg` (or set `DSH_RIPGREP_PATH` to your `rg`). Fixed in code at `packages/fs/tool-fs-search/src/search-core.ts`. |
 | `bash` / `grep` run in `$HOME` (or the repo root) instead of the project you set in the task | the web fork does not yet wire the task "项目目录" field into `session.header.cwd`; the command cwd falls back to `process.cwd()` (where `dsh web` was launched) | set the project explicitly: launch with `DSH_PROJECT_DIR=/path/to/project`, or in the rc.d service `sysrc dsh_web_projectdir="/path/to/project"`. The `freebsd/dsh-web-run.sh` launcher `cd`s into it. |
+| `tsc -b` fails with `error TS2305: ... has no exported member 'boxrunProfileArgs'` (host build) | stale `boxrun.e2e.ts` test references a removed symbol; `lib/` for `dsh-sandbox-local` is not produced, harness falls back to boxrun | temporarily `mv` the test out, run `pnpm build:lib:host`, restore it. See §8.2. |
+| `EACCES: permission denied, mkdir '/.dsh/...'` at web start (only via rc.d) | rc.d launches with empty `$HOME` (defaults to `/`) | `sysrc dsh_web_env="HOME=/home/skywalk"`; see §8.2. |
 
 ---
 

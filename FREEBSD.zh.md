@@ -229,6 +229,99 @@ sh /tmp/dsh-jail-test.sh   # 降权到调用者 uid、cwd=/workspace、只读拒
 
 > 详细部署 / 排错手册见 **`freebsd-sandbox.zh.md`**（中文）与 **`freebsd-sandbox.md`**（英文）。
 
+---
+
+### 8.2 在第二台机器上部署 —— fb98（192.168.0.88）要点
+
+上面的步骤在 `192.168.1.5`（FreeBSD 14.3，仓库在 `/home/workbuddy/github/deepseek-harness`）验证通过。同一套流程已复刻到第二台机器 **fb98 / 192.168.0.88（FreeBSD 15.1-RELEASE-p1）**。这里把差异以及该机特有的两个坑记下来，方便再次部署可复现。
+
+**与 192.168.1.5 的环境差异**
+
+| 项 | 192.168.1.5 | fb98 / 192.168.0.88 |
+| --- | --- | --- |
+| 仓库路径 / 用户 | `/home/workbuddy/github/deepseek-harness`（workbuddy） | `/home/skywalk/github/deepseek-harness`（skywalk） |
+| FreeBSD | 14.3-RELEASE amd64 | 15.1-RELEASE-p1 amd64 |
+| `/usr` 挂载 | **只读** → 二进制放 `/var/dsh-jail-run` | **可写**，但仍把二进制装到 `/var/dsh-jail-run`，以对齐仓库脚本默认的 `DSH_JAIL_RUN_BIN` |
+| `kern.racct.enable` | `1` | `0` —— **不是阻塞项**（见下注） |
+| `nullfs` / `tmpfs` | nullfs 已加载，tmpfs 内建 | 相同（nullfs 运行时已加载；tmpfs 内建于 GENERIC） |
+
+> ⚠️ **两台机器的 `/tmp` 都是 `nosuid` 的 ZFS 数据集** —— 千万别把 setuid 的 `dsh-jail-run` 装到那里，否则 setuid 位被忽略、helper 静默失效。用 `/var/dsh-jail-run`（或在 `/usr` 可写的机器上用 `/usr/local/sbin/dsh-jail-run`）。
+
+**第 0 步 —— 把仓库升到含沙箱的提交**
+
+fb98 上原本是一份**老** checkout，**没有** FreeBSD jail 沙箱代码（`freebsd/dsh-jail-run.c`、`packages/sandbox/sandbox-local/`、`packages/sandbox/sandbox/` 全缺）。先对齐 `origin/master`：
+
+```sh
+cd /home/skywalk/github/deepseek-harness
+git fetch origin
+git reset --hard origin/master     # 现在 9d1a0a6097，含 jail 沙箱 + 本手册
+git log --oneline -1               # 9d1a0a6097 ...
+ls freebsd/dsh-jail-run.c packages/sandbox/sandbox-local/src   # 必须存在
+```
+
+**坑 A —— `pnpm build:lib`（host）被一个坏测试文件中断**
+
+`pnpm run build` / `pnpm build:lib:host` 会对每个包跑 `tsc -b`，**包括** `packages/sandbox/sandbox-local/tests/**`。在 `origin/master` 上，`packages/sandbox/sandbox-local/tests/boxrun.e2e.ts` 仍从 `profiles.ts` import 已删除的 `boxrunProfileArgs`（TS2305），导致 `tsc -b` 中断，于是 `@deepseek-ai/dsh-sandbox-local` 的 `lib/` **根本产不出** —— 而早先 boxrun 时代残留的 `lib/` 会错误地选 `/usr/local/sbin/boxrun` 而非 `dsh-jail-run`。
+
+现象：
+
+```
+packages/sandbox/sandbox-local/tests/boxrun.e2e.ts:8:10
+  error TS2305: Module '.../profiles' has no exported member 'boxrunProfileArgs'.
+```
+
+修复 —— 临时把该测试移出、构建、再还原（该测试文件不进入 `lib` 产物，所以不改任何发布代码）：
+
+```sh
+mv packages/sandbox/sandbox-local/tests/boxrun.e2e.ts /tmp/boxrun.e2e.ts.bak
+pnpm build:lib:host           # tsc -b + tsdown → 产出 lib/
+# 还原：
+mv /tmp/boxrun.e2e.ts.bak packages/sandbox/sandbox-local/tests/boxrun.e2e.ts
+```
+
+> 若 `git checkout -- <文件>` 报 "not known to git"，说明该测试文件未受 git 跟踪（例如被 gitignore）—— 从 `/tmp` 移回原位即可，如上所示。仓库工作树保持干净。
+
+验证重建后的 lib 真的选了 jail 后端（而非 boxrun）：
+
+```sh
+DSH_JAIL_RUN_BIN=/var/dsh-jail-run node freebsd/verify-sandbox.mjs
+# PASS=10 FAIL=0  （selected backend 一行显示 dsh-jail-run，而非 boxrun）
+```
+
+> **`kern.racct.enable: 0` 没问题。** `freebsd/dsh-jail-run.c` 用 `rctl -a ... 2>/dev/null` 加资源限制（忽略错误），所以没有 RACCT/RCTL 记账也不影响 jail 运行——后端照样可用。别把 `kern.racct.enable: 0` 当成失败。
+
+**坑 B —— rc.d 能起但 app 报 `EACCES: /.dsh`（`$HOME` 缺失）**
+
+手动用 `su skywalk -c '...'` 启动时，会话继承 `HOME=/home/skywalk`，web 正常。但 **rc.d 服务** 以**空 `$HOME`**（默认 `/`）拉起命令，于是 harness 试图 `mkdir /.dsh/profiles/node_modules`，直接挂：
+
+```
+Error: EACCES: permission denied, mkdir '/.dsh/profiles/node_modules'
+```
+
+修复 —— 在 `rc.conf` 里告诉 rc.d 家目录：
+
+```sh
+sysrc dsh_web_env="HOME=/home/skywalk"    # 与 dsh_web_enable=YES 等并列设置
+service dsh_web restart
+```
+
+此后 `service dsh_web start`（即开机走的路径）正常，运行进程的环境里 `HOME=/home/skywalk`。
+
+> ⚠️ 任何会留下长驻进程的 `service dsh_web ...` / `daemon` 调用都会**吞掉 SSH helper 的命令回显**（shell 在 daemon 脱离前就返回了）。务必用**另一条独立命令**做状态核查（`pgrep -f dsh:freebsd`、`fetch -qo - http://127.0.0.1:3080`、统计日志里 `SANDBOX_UNAVAILABLE` 的次数），别信启动命令的 stdout。
+
+**fb98 终检状态**
+
+| 核查项 | 结果 |
+| --- | --- |
+| setuid helper `/var/dsh-jail-run` | `-rwsr-xr-x root:wheel`，jail 内 `pwd` → `/workspace` |
+| `freebsd/verify-sandbox.mjs` | PASS=10 FAIL=0 |
+| `pnpm vitest run packages/sandbox/sandbox-local/tests/freebsd-jail.e2e.ts` | 5/5 |
+| web（`:3080`） | HTTP 200，`DSH_JAIL_RUN_BIN=/var/dsh-jail-run`，未设 `danger-full-access`（默认 jail 受限） |
+| 日志中 `SANDBOX_UNAVAILABLE` | 0 |
+| rc.d 开机自启 | `dsh_web_enable=YES` + `dsh_web_env="HOME=/home/skywalk"` |
+
+---
+
 ## 9. 运行 Web UI
 
 ```sh
@@ -340,6 +433,8 @@ git -c core.hooksPath=/tmp/nohooks push <remote> <branch>
 | `gen-third-party-notices` 钩子 commit / push 失败 | 上游钩子要 Linux-only 的 claude-agent-sdk | FreeBSD 平台不兼容，与改动无关；`git commit --no-verify` 或 `git -c core.hooksPath=/tmp/nohooks push`。 |
 | `grep` / `glob` 报 `could not start its search command (ripgrep launch failed)` | `@vscode/ripgrep` 在 FreeBSD 无原生二进制，其 `rgPath` 指向缺失文件 | `pkg install ripgrep`，`grep`/`glob` 工具会自动回退到系统 `rg`（或设 `DSH_RIPGREP_PATH` 指向你的 `rg`）。代码修复在 `packages/fs/tool-fs-search/src/search-core.ts`。 |
 | `bash` / `grep` 落在 `$HOME`（或仓库根）而非任务里设的项目目录 | 本 fork 尚未把任务的"项目目录"字段接进 `session.header.cwd`，命令 cwd 回退到 `process.cwd()`（即 `dsh web` 启动目录） | 显式指定项目：启动加 `DSH_PROJECT_DIR=/项目路径`，或在 rc.d 服务里 `sysrc dsh_web_projectdir="/项目路径"`。`freebsd/dsh-web-run.sh` 启动器会 cd 进去。 |
+| `tsc -b` 报 `error TS2305: ... has no exported member 'boxrunProfileArgs'`（host 构建） | 陈旧的 `boxrun.e2e.ts` 测试引用了已删除的符号，导致 `dsh-sandbox-local` 的 `lib/` 产不出、harness 回退到 boxrun | 临时 `mv` 该测试出目录，跑 `pnpm build:lib:host`，再还原。见 8.2 节。 |
+| web 启动时（仅 rc.d 路径）报 `EACCES: permission denied, mkdir '/.dsh/...'` | rc.d 以空 `$HOME`（默认 `/`）拉起命令 | `sysrc dsh_web_env="HOME=/home/skywalk"`；见 8.2 节。 |
 
 ---
 
