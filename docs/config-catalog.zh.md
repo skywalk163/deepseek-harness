@@ -2257,7 +2257,7 @@ export interface Config {
 export interface Config {
   /** Backend registry type (default: `shell`). */
   backendType?: string
-  /** Interactive shell executable (default: `/bin/bash`). */
+  /** Interactive shell executable (default: `/bin/bash` on Linux/macOS, `/usr/local/bin/bash` on FreeBSD). */
   shellPath?: string
   /** Shell arguments (default: `--noprofile --norc -i`). */
   shellArgs?: string[]

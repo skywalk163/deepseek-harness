@@ -1,0 +1,83 @@
+# FreeBSD counterpart of .github/workflows/e2e.yml — real DeepSeek API e2e.
+#
+# Same contract as upstream: consumes the DEEPSEEK_API_KEY_EXTERNAL repository
+# secret, hits https://api.deepseek.com, and hard-fails the preflight if the
+# key is missing (the e2e suites self-skip without a key, which would otherwise
+# report a false green).
+#
+# Gitea specifics:
+#   * runs-on: freebsd (host runner fb5-freebsd — labels freebsd/freebsd-14.3/self-hosted)
+#   * checkout uses the local action repo (bare uses can intermittently resolve to github.com)
+#   * no pnpm/action-setup or actions/setup-node — the host has node 24 + pnpm 11.7.0 in /usr/local/bin
+#   * the bubblewrap install step is dropped — that is a Linux-only sandbox rung;
+#     FreeBSD's confinement is jail(2) and is proven in sandbox.yml
+#   * the job-level `if:` guards forks/dependabot like upstream
+
+name: E2E (real DeepSeek API) — FreeBSD
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, master]
+  pull_request:
+  schedule:
+    - cron: '17 0 * * *'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+env:
+  DSH_TELEMETRY_DISABLED: '1'
+
+jobs:
+  e2e:
+    runs-on: freebsd
+    name: e2e
+    if: >-
+      github.event_name != 'pull_request'
+      || !(github.event.pull_request.head.repo.fork || github.event.pull_request.user.login == 'dependabot[bot]')
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: http://192.168.1.5:3000/actions/checkout@v4
+
+      - name: Toolchain
+        run: |
+          set -euxo pipefail
+          node -v
+          pnpm -v
+
+      - name: Install (immutable)
+        run: pnpm install --frozen-lockfile
+
+      # Guard against a false green: the e2e suites self-skip when the key is
+      # absent, so a missing/misconfigured secret would otherwise pass as
+      # "all skipped". This job only runs on trusted events, so the secret MUST
+      # be present — fail loudly if not. Configure it as a Gitea repository
+      # secret named DEEPSEEK_API_KEY_EXTERNAL.
+      - name: Preflight (require DEEPSEEK_API_KEY)
+        env:
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY_EXTERNAL }}
+        run: |
+          set -euo pipefail
+          if [ -z "${DEEPSEEK_API_KEY:-}" ]; then
+            echo "::error::DEEPSEEK_API_KEY is empty. The e2e suite would self-skip and"
+            echo "::error::report a false green. Configure the repository secret DEEPSEEK_API_KEY_EXTERNAL."
+            exit 1
+          fi
+          echo "DEEPSEEK_API_KEY present."
+
+      - name: Build (lib for the e2e example bins)
+        run: pnpm run build
+
+      - name: E2E tests (real DeepSeek API)
+        env:
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY_EXTERNAL }}
+          DEEPSEEK_BASE_URL: https://api.deepseek.com
+          DSH_E2E_MAX_WORKERS: 14
+          DSH_EXAMPLE_MODE: lib
+        run: pnpm run test:e2e

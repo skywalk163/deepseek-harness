@@ -1,0 +1,52 @@
+# FreeBSD counterpart of .github/workflows/docs-pages.yml.
+#
+# Upstream builds the docs and deploys to GitHub Pages. Gitea has no Pages,
+# so this port keeps the build/verify half (pnpm run doc-sync -> website/.dist)
+# and DROPS the deploy job. To publish on the LAN like quye does, add a deploy
+# step per docs/LOCAL_CI.md §12 (copy website/.dist into
+# /usr/local/www/gitea-pages/pages/<owner>/<repo>/ and serve via nginx ^~ /pages/).
+
+name: Build documentation — FreeBSD
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - 'docs/**'
+      - 'package.json'
+      - 'pnpm-lock.yaml'
+      - 'pnpm-workspace.yaml'
+      - 'scripts/project-doc-site.ts'
+      - 'scripts/project-doc-site.spec.ts'
+      - 'website/**'
+  workflow_dispatch:
+
+concurrency:
+  group: doc-build
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  PRIMARY_NODE_VERSION: '24'
+  DSH_TELEMETRY_DISABLED: '1'
+
+jobs:
+  build:
+    runs-on: freebsd
+    steps:
+      - name: Checkout
+        uses: http://192.168.1.5:3000/actions/checkout@v4
+
+      - name: Toolchain
+        run: |
+          set -euxo pipefail
+          node -v
+          pnpm -v
+
+      - name: Install (immutable)
+        run: pnpm install --frozen-lockfile
+
+      - name: Verify and build documentation
+        run: pnpm run doc-sync

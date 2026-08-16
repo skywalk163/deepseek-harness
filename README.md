@@ -37,14 +37,9 @@ pnpm dsh web
 
 ### Run from source on FreeBSD
 
-> **Use this fork for FreeBSD — not yet merged upstream.** The FreeBSD port (the `process-inspector` ps-syntax fix, the `terminal-bash` default-shell fix, the `crypto.randomUUID` polyfill, and the loopback-only trust fence) is **maintained in this repository** and has **not been merged into upstream `deepseek-ai/deepseek-harness`**. Clone **this repository** (not upstream) until that merge lands, or the FreeBSD fixes will be missing.
-> Mirror: `https://github.com/skywalk163/deepseek-harness.git`
 
 > **Full step-by-step installation runbook:** See [FREEBSD.md](FREEBSD.md) for a complete, copy-paste install guide — prerequisites, the `@pnpm/exe.freebsd-x64` pitfall, gmake shim, bash dependency, loopback fence, service/rc.d, git remotes, and a troubleshooting table.
 
-DeepSeek Harness runs on FreeBSD (verified on FreeBSD 14.3-RELEASE amd64 with
-Node 24). Every FreeBSD-specific adjustment is already committed to
-`pnpm-workspace.yaml`, so the standard flow works right after cloning:
 
 ```sh
 git clone https://gitcode.com/skywalk163/deepseek-harness.git
@@ -54,11 +49,6 @@ pnpm run build
 pnpm dsh:freebsd web
 ```
 
-The Web UI listens on `http://127.0.0.1:3080` and **only answers to loopback
-addresses** (see "Accessing the Web UI" below -- this is a hard security fence,
-not a config toggle). To open it from another machine, use an SSH tunnel:
-`ssh -L 3080:127.0.0.1:3080 <user>@<freebsd-host>`, then browse
-`http://localhost:3080`.
 
 #### Prerequisites
 
@@ -66,19 +56,7 @@ not a config toggle). To open it from another machine, use an SSH tunnel:
 pkg install node24 npm-node24 gmake python3 pkgconf bash
 ```
 
-`bash` is required even though it is **not** part of a default FreeBSD install
-(the base interactive shell is `/bin/sh`, an ash derivative). The
-`terminal-bash` backend -- used by the `code` and `mini` agent modes -- depends
-on bash-only behaviour: `PROMPT_COMMAND` emits the per-prompt OSC `133;D;` marker
-that the harness reads to know when a command finished and with what exit status,
-and the default shell flags `--noprofile --norc -i` are bash-only. The base
-`/bin/sh` cannot be substituted; if bash is missing the service fails with
-`PTY shell exited during startup` (or, with the bundled guard, a clear
-`terminal-bash: ... does not exist` message). Install bash from ports if your
-image omitted it: `cd /usr/ports/shells/bash && make install clean`.
 
-This repo pins `packageManager: pnpm@11.7.0`; the `pnpm` in FreeBSD ports may be
-older. Install the pinned version, either globally as root or under your home:
 
 ```sh
 npm install -g pnpm@11.7.0
@@ -87,12 +65,7 @@ npm install pnpm@11.7.0 --prefix "$HOME/.pnpm-home"
 export PATH="$HOME/.pnpm-home/node_modules/.bin:$PATH"
 ```
 
-`corepack enable` is the usual alternative, but as a non-root user it fails with
-`EACCES` because it writes shims into `/usr/local/bin`.
 
-`node-pty` compiles a native addon during `pnpm install`, and `node-gyp` requires
-GNU make invoked as `make` -- FreeBSD's `/usr/bin/make` is BSD make. Put a shim
-early on `PATH`:
 
 ```sh
 mkdir -p "$HOME/bin" && ln -sf /usr/local/bin/gmake "$HOME/bin/make"
@@ -101,79 +74,24 @@ export PATH="$HOME/bin:$PATH"
 
 #### Why FreeBSD uses `pnpm dsh:freebsd`
 
-`dsh:freebsd` is the normal `dsh` entry plus `--expose-internals`, and you must
-also set `DSH_PERMISSION_MODE`:
 
-- **`--expose-internals` is mandatory on FreeBSD.** The loader reaches Node's
-  internal ESM loader either through that flag or through the
-  `node-addon-require-builtin` native addon. That addon ships prebuilds for
-  darwin/linux/win32 only -- there is no `node-addon-require-builtin-freebsd-x64`
-  and no source-build fallback -- so on FreeBSD the flag is the only route.
-  Without it the HMR service, which every long-lived surface such as `web` mounts
-  unconditionally, aborts startup with
-  `--expose-internals is required for HMR service`. The flag cannot be passed via
-  `NODE_OPTIONS`; Node rejects it there.
-- **The sandbox has no FreeBSD backend.** Confinement supports Linux
-  (`bwrap`/`landlock`), macOS (`seatbelt`) and Windows ACL only, so on FreeBSD it
-  fails closed and startup stops. Launch with:
 
   ```sh
   DSH_PERMISSION_MODE=danger-full-access pnpm dsh:freebsd web
   ```
 
-  This runs the agent **unconfined**. Only do it on a machine you are willing to
-  let the agent modify.
 
 #### What is pre-configured for FreeBSD
 
-All of it lives in `pnpm-workspace.yaml` -- pnpm v11 no longer reads the `pnpm`
-field of `package.json`, and it reads only auth/registry keys from `.npmrc`:
 
-- **`supportedArchitectures`** (`os: freebsd`, `cpu: x64` **and** `wasm32`).
-  `sharp` publishes no native FreeBSD binary (`@img/sharp-freebsd-x64` does not
-  exist), so its WASM path -- `@img/sharp-freebsd-wasm32` delegating to
-  `@img/sharp-wasm32` -- is the only working image backend. That package declares
-  `cpu: wasm32`, so pnpm's platform filter skips it on an x64 host unless
-  `wasm32` is listed. Image processing therefore runs on WASM and is slower than
-  a native build. Omitting this yields
-  `Could not load the "sharp" module using the freebsd-x64 runtime` at startup.
-- **`shamefullyHoist: true`**. The runtime loader resolves plugins through
-  dynamic `import('@deepseek-ai/dsh-client-ui-*')`. Under pnpm's isolated layout
-  those workspace packages never appear in the top-level `node_modules` and the
-  import fails with `ERR_MODULE_NOT_FOUND`.
-- **`packageExtensions` for `sharp`** -- redundant with `supportedArchitectures`,
-  kept as an explicit declaration of the two WASM runtime packages.
 
-`.npmrc` also points `registry` and `disturl` at the npmmirror mirror, which
-makes FreeBSD platform tarballs and the `node-pty` Node-headers download
-reliable from mainland China. Remove those two lines to use the default registry.
 
 #### Accessing the Web UI (read this before exposing it anywhere)
 
-> **You cannot reach the UI through nginx / Caddy / Apache or any reverse proxy,
-> nor directly over a LAN IP or the public internet.** It only works through a
-> loopback address (`localhost` / `127.0.0.1`).
 
-The harness guards every host-side filesystem RPC -- including the "choose
-workspace directory" picker (`host.listDirectory`) -- behind a **loopback-only
-trust fence** (`packages/client/connection/src/rpc-host.ts`,
-`api-request-trust.ts`). A request whose `Host` header is not a recognized
-loopback name is rejected with `HTTP 403` before it reaches the handler. The
-check accepts only `localhost`, `[::1]` and `127.x.x.x`.
 
 What this means in practice:
 
-- **Reverse proxy / LAN IP / public domain -> `403`.** Even if nginx forwards the
-  request perfectly, the browser sends `Host: <lan-ip>:3080` (or your domain).
-  The fence rejects it, and the very first file operation -- picking the
-  workspace directory -- fails with
-  `transport failure for /api/host.listDirectory: HTTP 403`. A stock reverse
-  proxy preserves the client `Host`, so it cannot help; rewriting `Host`/`Origin`
-  to `localhost:3080` is fragile and **not** recommended for beginners.
-- **Plain `http://<lan-ip>:3080` directly -> also blocked**, for the same reason,
-  and additionally the browser disables `crypto.randomUUID()` in a non-secure
-  (non-localhost, non-HTTPS) context. (A polyfill is shipped to soften that, but
-  the 403 fence is the real blocker for file operations.)
 
 Supported ways to reach the UI:
 
@@ -181,25 +99,12 @@ Supported ways to reach the UI:
    ```sh
    ssh -L 3080:127.0.0.1:3080 <user>@<freebsd-host>
    ```
-   Then open `http://localhost:3080`. This gives a loopback `Host` (no 403)
-   **and** a secure context (native `crypto.randomUUID` works) -- both pitfalls
-   disappear at once.
-2. **On the FreeBSD box itself**, just browse `http://127.0.0.1:3080` -- everything
-   works natively.
+2. **On the FreeBSD box itself**, just open `http://127.0.0.1:3080` — everything works natively.
 
-If you truly need off-box access, present `localhost` to the browser (tunnel or
-VPN), not a reverse proxy that keeps the client `Host`.
 
 #### Running as a service (restart script + rc.d)
 
-The helper scripts now ship **inside the repo** under `freebsd/` and resolve every
-path relative to their own location, so they work no matter where you cloned the
-repo (no editing required):
 
-- `freebsd/dsh-web-run.sh` -- launcher: sets `DSH_PERMISSION_MODE`, `cd`s into the
-  repo root, and `exec`s `pnpm dsh:freebsd web`.
-- `freebsd/dsh-web-restart.sh` -- one-shot control:
-  `stop | start | restart | status` (default `restart`).
 - `freebsd/dsh_web.rcd` -- rc.d service template.
 
 Run the service directly (no root needed):
@@ -208,8 +113,6 @@ Run the service directly (no root needed):
 sh freebsd/dsh-web-restart.sh restart   # also: stop / start / status
 ```
 
-For boot-time autostart, copy the rc.d template and point it at this repo. The
-`$(pwd)` fills the path for you -- run it from the repo root:
 
 ```sh
 su - root
@@ -224,14 +127,6 @@ service dsh_web status
 
 Notes:
 
-- `pnpm` is resolved from `PATH` (install via `npm install -g pnpm@11.7.0` as
-  described above). Do **not** rely on a `/tmp/p117`-style path -- `/tmp` is
-  cleared on reboot and the service would fail to start.
-- The `pidfile` and log are written **inside the repo**
-  (`<repo>/dsh_web.pid`, `<repo>/dsh_web.log`) so they survive reboots and `/tmp`
-  cleanup, and travel with the checkout.
-- The rc.d service runs as the `dsh_web_user` you set; that user must own the repo
-  directory so it can write the pidfile/log and read `node_modules`.
 
 #### Troubleshooting / known FreeBSD pitfalls
 
@@ -250,9 +145,6 @@ Notes:
 
 #### Verified on FreeBSD
 
-`node-pty` compiles natively, `sharp` renders through WASM, `pnpm run build`
-completes (`tsc -b` + `tsdown` + `vite`), and `dsh web` serves the UI over HTTP
-on loopback.
 
 
 ## Community and support

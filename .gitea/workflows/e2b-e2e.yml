@@ -1,0 +1,55 @@
+# FreeBSD counterpart of .github/workflows/e2b-e2e.yml.
+# Opt-in workflow_dispatch only (provisions external E2B sandboxes).
+# Host runner is FreeBSD, so runs-on: freebsd + local checkout.
+
+name: E2E (E2B sandbox) — FreeBSD
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  DSH_TELEMETRY_DISABLED: '1'
+
+jobs:
+  e2b:
+    runs-on: freebsd
+    name: E2B live Loader composition
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: http://192.168.1.5:3000/actions/checkout@v4
+
+      - name: Toolchain
+        run: |
+          set -euxo pipefail
+          node -v
+          pnpm -v
+
+      - name: Install (immutable)
+        run: pnpm install --frozen-lockfile
+
+      - name: Preflight (require E2B API key)
+        env:
+          E2B_API_KEY: ${{ secrets.E2B_API_KEY_EXTERNAL }}
+        run: |
+          set -euo pipefail
+          if [ -z "${E2B_API_KEY:-}" ]; then
+            echo "::error::E2B_API_KEY is empty. Configure the E2B_API_KEY_EXTERNAL repository secret."
+            exit 1
+          fi
+          echo "E2B_API_KEY present."
+
+      - name: Build (lib for the E2B Loader smoke)
+        run: pnpm run build
+
+      - name: E2B tests (live sandbox)
+        env:
+          E2B_API_KEY: ${{ secrets.E2B_API_KEY_EXTERNAL }}
+          DSH_E2E_MAX_WORKERS: '1'
+          DSH_EXAMPLE_MODE: lib
+        run: >-
+          pnpm exec vitest run --config vitest.e2e.config.ts
+          packages/e2b/e2b/tests/composition.e2e.ts

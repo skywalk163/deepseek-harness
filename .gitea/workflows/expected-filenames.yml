@@ -1,0 +1,29 @@
+# FreeBSD counterpart of .github/workflows/expected-filenames.yml.
+# The upstream version runs on ubuntu; on this Gitea instance the host runner
+# is FreeBSD, so runs-on: freebsd with the local checkout action.
+
+name: Expected filenames (FreeBSD)
+
+on:
+  pull_request:
+    paths:
+      - '*[gG][oO][lL][dD][eE][nN]*'
+      - '**/*[gG][oO][lL][dD][eE][nN]*'
+      - '!vendor/**'
+
+permissions:
+  contents: read
+
+env:
+  DSH_TELEMETRY_DISABLED: '1'
+
+jobs:
+  expected-filenames:
+    name: no golden filenames
+    runs-on: freebsd
+    steps:
+      - name: Checkout
+        uses: http://192.168.1.5:3000/actions/checkout@v4
+
+      - name: Check tracked filenames
+        run: scripts/check-expected-filenames.sh

@@ -1,0 +1,112 @@
+# FreeBSD counterpart of .github/workflows/ci.yml.
+#
+# Upstream ci.yml is built around GitHub-hosted enterprise runners, cache
+# actions, Wine/Windows legs and failover pools — none of which apply to the
+# FreeBSD host runner on this Gitea instance (fb5-freebsd, labels
+# freebsd/freebsd-14.3/self-hosted, host mode, no Docker). This port keeps the
+# signal that matters on FreeBSD: immutable install, host lib build, web build,
+# and the static gate aggregate.
+#
+# Verified on this exact box: pnpm install --frozen-lockfile, pnpm run
+# build:lib:host, pnpm run build:web and pnpm run check:ci:static all pass on
+# FreeBSD 14.3 / Node 24 / pnpm 11.7.0.
+#
+# Unit tests (`pnpm test`) are intentionally a separate opt-in job: the full
+# suite has ~60 FreeBSD-specific environment failures (e.g. @vscode/ripgrep
+# ships no freebsd-x64 binary, fd-0 socket-vs-other PTY differences) that are
+# platform drift, not regressions — see FREEBSD.md. Running them in the default
+# gate would keep CI permanently red and drown the real signals above.
+
+name: CI (FreeBSD)
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name != 'push' }}
+
+permissions:
+  contents: read
+
+env:
+  PRIMARY_NODE_VERSION: '24'
+  # CI runs must never report to the production telemetry endpoint baked
+  # into apps/cli/cordis.yml (AppCLIEntry disables the row when set).
+  DSH_TELEMETRY_DISABLED: '1'
+  DSH_JAIL_RUN_BIN: /var/dsh-jail-run
+
+jobs:
+  node-24:
+    runs-on: freebsd
+    name: node 24 / build + static gates
+    timeout-minutes: 60
+    steps:
+      # Always the local action repo — a bare `actions/checkout@v4` can
+      # intermittently resolve to github.com and fail (docs/LOCAL_CI.md §6.4).
+      - name: Checkout
+        uses: http://192.168.1.5:3000/actions/checkout@v4
+
+      - name: Toolchain
+        run: |
+          set -euxo pipefail
+          node -v
+          pnpm -v
+          bash --version | head -1
+          gmake --version | head -1
+
+      # node-gyp compiles the node-pty native addon during install and invokes
+      # GNU make under the name `make`; FreeBSD's /usr/bin/make is BSD make.
+      # The runner's HOME is not the interactive user's, so recreate the shim.
+      - name: GNU make shim
+        run: |
+          set -euxo pipefail
+          mkdir -p "$HOME/bin"
+          ln -sf /usr/local/bin/gmake "$HOME/bin/make"
+          echo "PATH=$HOME/bin:$PATH" >> "$GITHUB_ENV"
+
+      - name: Install (immutable)
+        run: pnpm install --frozen-lockfile
+
+      - name: Build lib (host)
+        run: pnpm run build:lib:host
+
+      - name: Build web
+        run: pnpm run build:web
+
+      - name: Static gates (lint / typecheck / catalogs / docs)
+        run: pnpm run check:ci:static
+
+  unit-tests:
+    runs-on: freebsd
+    name: node 24 / unit tests (known FreeBSD drift, opt-in)
+    if: github.event_name == 'workflow_dispatch'
+    timeout-minutes: 90
+    steps:
+      - name: Checkout
+        uses: http://192.168.1.5:3000/actions/checkout@v4
+
+      - name: Toolchain
+        run: |
+          set -euxo pipefail
+          node -v
+          pnpm -v
+
+      - name: GNU make shim
+        run: |
+          set -euxo pipefail
+          mkdir -p "$HOME/bin"
+          ln -sf /usr/local/bin/gmake "$HOME/bin/make"
+          echo "PATH=$HOME/bin:$PATH" >> "$GITHUB_ENV"
+
+      - name: Install (immutable)
+        run: pnpm install --frozen-lockfile
+
+      # Full unit suite. Expect ~60 known FreeBSD platform failures today
+      # (see FREEBSD.md); this job exists to track that drift, not to gate.
+      - name: Unit tests (keyless)
+        continue-on-error: true
+        run: pnpm test

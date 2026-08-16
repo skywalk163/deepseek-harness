@@ -1,0 +1,92 @@
+# FreeBSD jail sandbox CI (Gitea Actions, host runner fb5-freebsd).
+#
+# This is the FreeBSD counterpart of the upstream .github/workflows/sandbox.yml
+# (which proves bwrap / Landlock / Seatbelt kernel confinement on Linux/macOS).
+# On FreeBSD the confinement primitive is jail(2), provided by the setuid
+# helper freebsd/dsh-jail-run (installed as /var/dsh-jail-run, root:wheel 4755).
+# The harness's local sandbox provider auto-selects the freebsd-jail backend
+# once that helper is installed, so the proofs here are:
+#   1. freebsd/verify-sandbox.mjs  -> PASS=10 FAIL=0
+#   2. freebsd-jail.e2e.ts         -> 5/5 (no self-skip; missing runner = fail)
+#
+# NOTE: because .gitea/workflows/ exists, Gitea ignores .github/workflows/
+# entirely (WORKFLOW_DIRS is ordered .gitea/workflows first), so the ubuntu
+# legs of the upstream sandbox.yml do NOT run here. GitHub-side CI is unchanged.
+
+name: Sandbox (FreeBSD jail)
+
+on:
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  # CI runs must never report to the production telemetry endpoint baked
+  # into apps/cli/cordis.yml (AppCLIEntry disables the row when set).
+  DSH_TELEMETRY_DISABLED: '1'
+  DSH_JAIL_RUN_BIN: /var/dsh-jail-run
+
+jobs:
+  freebsd-jail:
+    runs-on: freebsd
+    name: freebsd-jail (real kernel confinement)
+    timeout-minutes: 45
+    steps:
+      # Always the local action repo — a bare `actions/checkout@v4` can
+      # intermittently resolve to github.com and fail (see docs/LOCAL_CI.md §6.4).
+      - name: Checkout
+        uses: http://192.168.1.5:3000/actions/checkout@v4
+
+      - name: Toolchain
+        run: |
+          set -euxo pipefail
+          node -v
+          pnpm -v
+          bash --version | head -1
+          gmake --version | head -1
+
+      - name: Setuid helper present
+        run: |
+          set -euxo pipefail
+          ls -l /var/dsh-jail-run
+          [ -u /var/dsh-jail-run ] || { echo "::error::/var/dsh-jail-run is not setuid — install with chmod 4755, chown root:wheel"; exit 1; }
+
+      - name: Install (immutable)
+        run: pnpm install --frozen-lockfile
+
+      # verify-sandbox.mjs and freebsd-jail.e2e.ts import the BUILT
+      # @deepseek-ai/dsh-sandbox-local lib/, so build:lib:host first.
+      - name: Build lib (host)
+        run: pnpm run build:lib:host
+
+      - name: Verify sandbox backend (10 checks)
+        # NO_COLOR: vitest force-enables ANSI color under CI even without a TTY,
+        # which would thread escape codes through the summary line we grep.
+        env:
+          NO_COLOR: 1
+        run: |
+          set -u +e -o pipefail
+          out=$(node freebsd/verify-sandbox.mjs 2>&1); status=$?
+          echo "$out"
+          [ "$status" -eq 0 ]
+          echo "$out" | grep -qE 'PASS=10 FAIL=0'
+
+      - name: Sandbox e2e (freebsd-jail, real jail confinement)
+        env:
+          NO_COLOR: 1
+        run: |
+          set -u +e -o pipefail
+          out=$(pnpm exec vitest run --config vitest.e2e.config.ts \
+            packages/sandbox/sandbox-local/tests/freebsd-jail.e2e.ts 2>&1); status=$?
+          echo "$out"
+          [ "$status" -eq 0 ]
+          # Must have RUN — a self-skip (no helper) on the very platform that
+          # exists to prove the jail is a failure, not a pass.
+          echo "$out" | grep -qE 'Test Files[[:space:]]+1 passed \(1\)'
