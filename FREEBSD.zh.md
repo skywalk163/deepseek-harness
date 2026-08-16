@@ -185,25 +185,68 @@ pnpm run build     # 等价于 build:lib (tsc -b + tsdown) + build:web (vite)
 
 ---
 
+## 8.1 启用 FreeBSD jail 沙箱（推荐）
+
+与其让 agent 以非隔离方式运行（`danger-full-access`），你可以把每条 `code` / `mini` / `standard` 命令都关进**真正的 FreeBSD jail** 里。只要装好 setuid 的 `dsh-jail-run` helper，harness 的本地沙箱 provider 会在 FreeBSD 上自动选这个后端——无需 `danger-full-access`。
+
+### 编译并安装 setuid helper（root）
+
+```sh
+cc -O2 -Wall -ljail -o /usr/local/sbin/dsh-jail-run freebsd/dsh-jail-run.c
+chmod 4755 /usr/local/sbin/dsh-jail-run
+chown root:wheel /usr/local/sbin/dsh-jail-run
+```
+
+在 `/usr` 是**只读挂载**的机器上（本机即是），把二进制写到 `/var` 下，并用 `DSH_JAIL_RUN_BIN` 指过去：
+
+```sh
+cc -O2 -Wall -ljail -o /var/dsh-jail-run freebsd/dsh-jail-run.c
+chmod 4755 /var/dsh-jail-run
+chown root:wheel /var/dsh-jail-run
+# freebsd/dsh-web-run.sh 启动器已默认把 DSH_JAIL_RUN_BIN 指向 /var/dsh-jail-run
+```
+
+### 安全须知（改这个文件前先读 `freebsd/dsh-jail-run.c` 顶部注释）
+
+- 该二进制是 **setuid-root**。任何能执行它的本地用户都能建 jail——但命令始终在 jail **内部以原始（非 root）调用者 uid/gid** 运行。root 只用于 (a) 建 jail 和 (b) 挂载只读系统视图，随后在子进程里用 `setuid`/`setgid` 降权。**不存在静默提权**：没有 setuid 位时，该程序只能在已是 root 时建 jail，而 harness 永远不会授予 root。
+- 你传入的 workspace 是**唯一**暴露的可写宿主机目录。其余一切都是只读 `nullfs` 挂载或全新 `tmpfs`；jail 默认**无网络**（用 `--network` 或 `DSH_JAIL_NETWORK` 显式开启）。
+- 二进制必须 root 所有、且组/其他不可写，并放在非 root 用户不能改名/替换的目录里。
+
+### 后端做了什么
+
+`dsh-jail-run --workspace <root> --mode <read-only|workspace-write> -- <command...>` 在一个临时目录里建一个临时 jail，把宿主系统以只读方式挂载 + workspace（只读或读写）+ 受限 `devfs`（ruleset 4）+ 全新 `tmpfs` 挂到 `/tmp`，`jail_attach` 进去，降权到调用者，`chdir` 到 `/workspace`，再 `exec` 命令。命令退出后 jail 被拆除（挂载一并卸载）。harness 为 `read-only` / `workspace-write` 接上这个后端；`danger-full-access` 仍是显式逃生舱。
+
+### 验证
+
+```sh
+sh /tmp/dsh-jail-test.sh   # 降权到调用者 uid、cwd=/workspace、只读拒绝写入、
+                            # 无网络、干净拆除（9/9 通过）
+```
+
+（完整契约见 `freebsd/dsh-jail-run.c` 与 `freebsd-jail.e2e.ts` 测试。）
+
+---
+
 ## 9. 运行 Web UI
 
 ```sh
+pnpm dsh:freebsd web                       # 默认受限（若装了 helper 则走 jail 沙箱）
+# 或整机退出沙箱（显式逃生舱）：
 DSH_PERMISSION_MODE=danger-full-access pnpm dsh:freebsd web
 ```
 
 - **默认工作目录。** harness 把每条 `bash` / `grep` / 终端命令的 cwd 都走 `session.header.cwd`，当 Web UI 没有设置"每任务项目目录"时，它会回退到 `process.cwd()`（即本命令所在目录）。若从仓库根启动，命令默认就在仓库里——想指定项目，用 `DSH_PROJECT_DIR` 环境变量（`freebsd/dsh-web-run.sh` 启动器认这个变量；否则启动前先 `cd` 进你的项目）。在本 fork 把任务"项目目录"字段接进 `header.cwd` 之前，这是让项目成为默认工作目录的可靠办法。
 
 - `dsh:freebsd` = 普通 `dsh` + `--expose-internals`。FreeBSD 上 HMR 服务必须该 flag，且**不能**经 `NODE_OPTIONS` 传（`node-addon-require-builtin` 只发布 darwin/linux/win32 预编译，FreeBSD 无原生包也无源码兜底）。
-- **`DSH_PERMISSION_MODE=danger-full-access` 在 FreeBSD 上是必选项。** harness 不发行 FreeBSD 沙箱后端——confinement 只认识 Linux 的 bwrap/Landlock、macOS 的 Seatbelt、以及 Windows 的 ACL 受限令牌 runner。任何**受限**模式（`read-only` / `workspace-write`）都会**fail-closed** 并拒绝以非隔离方式运行命令。该变量让 agent 以**非隔离**方式运行，这是 FreeBSD 上目前唯一受支持的运作方式。**只在你愿意让 agent 修改的机器上这样跑。**
-- ⚠️ **`code` / `mini` 模式恰恰栽在这里。** 它们把持久 PTY bash 会话经由*受沙箱约束的* bash executor 驱动。若某会话**未**处于 `danger-full-access`（你保留着 Web 默认的 `workspace-write`，或存储的 UI 权限预设是 `workspace-write`），每条 `bash`/`ls`/文件命令都会中止并报：
+- **FreeBSD 现已自带 jail 沙箱后端（推荐）。** 只要装好 setuid 的 `dsh-jail-run` helper（见 8.1 节），本地沙箱 provider 会在 FreeBSD 上自动选一个真正的 jail——于是 `read-only` / `workspace-write` 模式会跑在 **jail 内部**，而非 fail-closed。`danger-full-access` 依旧可用，作为 helper 无法运行时的显式逃生舱（设 `DSH_PERMISSION_MODE=danger-full-access`）。若**未**装 helper，仍是旧行为：受限模式 fail-closed 报 `SANDBOX_UNAVAILABLE`，必须用 `danger-full-access`。
+- ⚠️ **`code` / `mini` 模式恰恰是 jail 发力之处——而且是好事。** 它们把持久 PTY bash 会话经由*受沙箱约束的* bash executor 驱动。装了 `dsh-jail-run` 后，每条 `bash`/`ls`/文件命令都关在一个 jail 里运行，其中唯一可写的宿主机目录就是 workspace；workspace 之外文件系统只读、且无网络。若**未**装 helper，会话会中止并报：
   ```
   Error: sandbox mode "workspace-write" is requested but no sandbox backend is usable on this host;
-  refusing to run the command unconfined. This host runs FreeBSD, which this build does not ship a
-  sandbox backend for (no bwrap, Landlock, Seatbelt, or Windows ACL runner). Run the consumer
-  unconfined by switching it to `danger-full-access`: launch with DSH_PERMISSION_MODE=danger-full-access,
+  refusing to run the command unconfined. Install the `dsh-jail-run` setuid helper (see section 8.1)
+  or, to opt out, switch to `danger-full-access`: launch with DSH_PERMISSION_MODE=danger-full-access,
   or pick the danger-full-access permission preset in the UI.
   ```
-  该报错**是设计如此（fail-closed），并非崩溃。** 在启动前设 `DSH_PERMISSION_MODE=danger-full-access`（推荐修复），或在 UI 中选 **danger-full-access** 权限预设，该模式即以非隔离方式运行。
+  该报错**是设计如此（fail-closed），并非崩溃。** 装 helper（推荐）或设 `DSH_PERMISSION_MODE=danger-full-access` 退出沙箱。
 - 默认监听 `http://127.0.0.1:3080`。
 
 ---
@@ -228,7 +271,7 @@ ssh -L 3080:127.0.0.1:3080 <user>@<freebsd-host>
 
 仓库自带路径无关的 helper 脚本（`freebsd/` 子目录，按自身位置推导仓库根，clone 到哪都行）。要自定义项目目录，在服务 env 里设 `DSH_PROJECT_DIR`（见下）——启动器会先 `cd` 进去，成为所有命令的默认工作目录。
 
-- `freebsd/dsh-web-run.sh`——启动器：设 `DSH_PERMISSION_MODE`、cd 进 `DSH_PROJECT_DIR`（默认仓库根）、`exec pnpm dsh:freebsd web`。
+- `freebsd/dsh-web-run.sh`——启动器：不再强制 `DSH_PERMISSION_MODE`（默认走 harness 的受限模式以启用 jail 沙箱；只有要退出时才设它），把 `DSH_JAIL_RUN_BIN` 指向 helper（本机只读 `/usr` 下默认 `/var/dsh-jail-run`），cd 进 `DSH_PROJECT_DIR`（默认仓库根），`exec pnpm dsh:freebsd web`。
 - `freebsd/dsh-web-restart.sh`——一键控制：`stop | start | restart | status`（默认 `restart`）。
 
 ```sh
@@ -287,7 +330,7 @@ git -c core.hooksPath=/tmp/nohooks push <remote> <branch>
 | `Could not load the "sharp" module using the freebsd-x64 runtime` | `sharp` 无 FreeBSD 原生二进制，需走 WASM | 保留 `pnpm-workspace.yaml` 的 `supportedArchitectures`（`os: freebsd`，`cpu` 含 `wasm32`）与 `sharp` `packageExtensions`。 |
 | `@deepseek-ai/dsh-client-ui-*` 报 `ERR_MODULE_NOT_FOUND` | 工作区插件未 hoist | 保留 `shamefullyHoist: true`。 |
 | `--expose-internals is required for HMR service` | FreeBSD 无 `node-addon-require-builtin` 预编译 | 用 `dsh:freebsd` 脚本（自带 `--expose-internals`）；不能放 `NODE_OPTIONS`。 |
-| `code` / `mini` 模式报 `sandbox mode "..." is requested but no sandbox backend is usable`（`SANDBOX_UNAVAILABLE`） | FreeBSD 无沙箱后端，且会话未处于 `danger-full-access` | **启动前设 `DSH_PERMISSION_MODE=danger-full-access`**（推荐），或在 UI 中选 **danger-full-access** 权限预设。这是设计上的 fail-closed，不是崩溃——见第 9 步。 |
+| `code` / `mini` 模式报 `sandbox mode "..." is requested but no sandbox backend is usable`（`SANDBOX_UNAVAILABLE`） | 未装 `dsh-jail-run` setuid helper（FreeBSD 没有**内置**后端，需要这个 helper） | **装上 helper**（见 8.1 节）——受限模式随即跑在 jail 里。或退出沙箱：启动前设 `DSH_PERMISSION_MODE=danger-full-access` / 在 UI 选 **danger-full-access** 预设。设计上的 fail-closed，不是崩溃——见第 9 步。 |
 | `crypto.randomUUID is not a function` | 非安全上下文（plain http / 非 localhost） | 经 `http://localhost:3080`（SSH 隧道）访问。 |
 | `transport failure for /api/host.listDirectory: HTTP 403` | 环回信任围栏拒绝非 loopback `Host` | 用 SSH 隧道 / `localhost`，别用反代或 LAN IP。 |
 | `node-pty` 编译失败 / ETIMEDOUT 拉 Node 头文件 | node-gyp 拉不到头文件 | 保留 `.npmrc` 的 `disturl`；确保 gmake shim 在 `PATH`。 |

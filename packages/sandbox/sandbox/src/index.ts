@@ -5,6 +5,7 @@
  * @module @deepseek-ai/dsh-sandbox
  */
 
+import { existsSync } from 'node:fs'
 import { Context, Service } from '@deepseek-ai/cordis'
 import { HarnessError } from '@deepseek-ai/dsh-llm'
 import type { SessionId } from '@deepseek-ai/dsh-session'
@@ -153,10 +154,17 @@ export class SandboxUnavailableError extends HarnessError {
  */
 function sandboxUnavailableHint(): string {
   if (process.platform === 'freebsd') {
-    return 'This host runs FreeBSD, which this build does not ship a sandbox backend for '
-      + '(no bwrap, Landlock, Seatbelt, or Windows ACL runner). Run the consumer unconfined by '
-      + 'switching it to `danger-full-access`: launch with DSH_PERMISSION_MODE=danger-full-access, '
-      + 'or pick the danger-full-access permission preset in the UI. '
+    const bin = process.env.DSH_JAIL_RUN_BIN ?? '/usr/local/sbin/dsh-jail-run'
+    if (existsSync(bin)) {
+      return 'This host runs FreeBSD and the jail sandbox backend (`dsh-jail-run`) is installed '
+        + 'but reported unusable — see the runner diagnostics above. If the setuid helper cannot '
+        + 'run on this host, switch the consumer to `danger-full-access`: launch with '
+        + 'DSH_PERMISSION_MODE=danger-full-access, or pick the danger-full-access permission preset in the UI. '
+    }
+    return 'This host runs FreeBSD. Install and enable the `dsh-jail-run` setuid helper '
+      + '(see FREEBSD.md / FREEBSD.zh.md) to run confined via a FreeBSD jail; if the helper '
+      + 'cannot be installed, switch the consumer to `danger-full-access`: launch with '
+      + 'DSH_PERMISSION_MODE=danger-full-access, or pick the danger-full-access permission preset in the UI. '
   }
   return 'Install bubblewrap or run a Landlock-enforcing kernel (Linux), ensure sandbox-exec '
     + 'is usable (macOS), or ensure the ACL restricted-token runner can start (Windows) '

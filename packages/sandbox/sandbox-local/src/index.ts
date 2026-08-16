@@ -135,10 +135,12 @@ export interface SandboxInternals {
   probeWindowsAcl?: () => boolean
   /** Replaces the private-temp-directory removal at provider dispose (a throwing fake exercises the cleanup-failure path). */
   rmTempDir?: (path: string) => void
+  /** Replaces the resolved `dsh-jail-run` binary path (a fake binary for probe tests). */
+  freebsdJailRunBin?: string
 }
 
 /** The chain's verdict: which runner confines, and how completely it enforces. */
-type SelectedRunner = { runner: 'bwrap' | 'landlock' | 'seatbelt' | 'windows-acl'; enforcement: SandboxEnforcement }
+type SelectedRunner = { runner: 'bwrap' | 'landlock' | 'seatbelt' | 'windows-acl' | 'freebsd-jail'; enforcement: SandboxEnforcement }
 
 /** One live session/workspace pair's private temp directory and capability. */
 interface AclTempCapability {
@@ -163,13 +165,17 @@ const PLATFORM_CHAINS: Record<string, readonly SelectedRunner['runner'][]> = {
   // a sole candidate, selected without a probe — its execution-time refusal
   // fails closed through its stderr signature (windows-acl-run:) and exit 127.
   win32: ['windows-acl'],
-  // FreeBSD ships no sandbox backend in this build (no bwrap, Landlock, Seatbelt,
-  // or Windows ACL runner), so its chain is empty and `confine()` fails closed
-  // with SANDBOX_UNAVAILABLE — the operator must run the consumer unconfined via
-  // `danger-full-access`. Kept explicit (rather than relying on the `?? []`
-  // fallback) so the unsupported platform is documented in code.
-  freebsd: [],
+  // FreeBSD confines via a real jail(2) backend driven by the setuid-root
+  // `dsh-jail-run` helper (freebsd/dsh-jail-run.c). The helper is a sole
+  // candidate: its presence is mandatory, so chainVerdict probes it even as a
+  // sole candidate and fails closed with SANDBOX_UNAVAILABLE when the helper is
+  // absent (rather than a confusing spawn ENOENT). `danger-full-access` remains
+  // the explicit escape hatch; there is intentionally no full-access fallback.
+  freebsd: ['freebsd-jail'],
 }
+
+/** Runners that must be functionally probed even as a sole candidate (their backend depends on an externally-installed helper). */
+const PROBE_SOLE_CANDIDATES = new Set<SelectedRunner['runner']>(['freebsd-jail'])
 
 /**
  * Enforcement completeness a rung claims when selected WITHOUT a probe (a
@@ -190,6 +196,10 @@ const STATIC_ENFORCEMENT: Record<SelectedRunner['runner'], SandboxEnforcement> =
   // workspace file to a path outside it. The backend enforces the remaining
   // ACL-addressable surface but must not advertise the absolute promise.
   'windows-acl': 'partial',
+  // The jail(2) backend governs every promised file effect by construction (a
+  // read-only nullfs for read-only mode, a read-write workspace bind for
+  // workspace-write), so it claims the full promise.
+  'freebsd-jail': 'full',
 }
 
 /**
@@ -215,6 +225,9 @@ const DENIAL_SIGNATURES = {
   // pwsh/.NET: "Access to the path '...' is denied."; cmd: "Access is denied.";
   // node EACCES: "permission denied".
   'windows-acl': ['access is denied', 'access to the path', 'permission denied'],
+  // nullfs EROFS on a read-only workspace bind; EACCES/EPERM on devfs or
+  // path-traversal attempts outside the jail.
+  'freebsd-jail': ['read-only file system', 'permission denied', 'operation not permitted'],
   runnerCommand: ['read-only file system', 'permission denied'],
 } as const satisfies Record<SelectedRunner['runner'] | 'runnerCommand', readonly string[]>
 
@@ -243,6 +256,9 @@ const RUNNER_FAILURE_RULES = {
   }],
   seatbelt: [{ fatalSignatures: ['sandbox-exec: '] }],
   'windows-acl': [{ allowedExitCodes: [WINDOWS_ACL_RUNNER_FAILURE_EXIT], fatalSignatures: ['windows-acl-run: '] }],
+  // The setuid helper prints `dsh-jail-run: <detail>` on every runner-side
+  // failure (bad workspace, missing mount, jail create failure) and exits 125.
+  'freebsd-jail': [{ allowedExitCodes: [125], fatalSignatures: ['dsh-jail-run: '] }],
 } as const satisfies Record<SelectedRunner['runner'], readonly RunnerFailureRule[]>
 
 /**
@@ -345,6 +361,7 @@ export class LocalSandboxProvider extends SandboxProvider {
       case 'landlock': return [this.landlockLauncher(), ...landlockProfileArgs(policy)]
       case 'seatbelt': return [this.seatbeltExec(), ...seatbeltProfileArgs(policy)]
       case 'windows-acl': return this.windowsAclRunnerArgv(policy)
+      case 'freebsd-jail': return [this.freebsdJailRunBin(), '--workspace', policy.workspaceRoot, '--mode', policy.mode]
       default: return assertNever(runner)
     }
   }
@@ -506,8 +523,18 @@ export class LocalSandboxProvider extends SandboxProvider {
     const chain = this.internals.chain ?? PLATFORM_CHAINS[this.internals.platform ?? process.platform] ?? []
     const [first, ...rest] = chain
     if (first === undefined) return 'unavailable'
-    // A sole candidate needs no arbitration; its execution-time refusal still fails closed.
-    if (rest.length === 0) return { runner: first, enforcement: STATIC_ENFORCEMENT[first] }
+    // A sole candidate needs no arbitration; its execution-time refusal still
+    // fails closed. The FreeBSD jail backend is the exception: it depends on an
+    // externally-installed setuid helper (`dsh-jail-run`), so its absence must
+    // fail closed with a clean SANDBOX_UNAVAILABLE (plus the install hint)
+    // rather than a confusing spawn ENOENT at command time.
+    if (rest.length === 0) {
+      if (PROBE_SOLE_CANDIDATES.has(first)) {
+        const enforcement = this.probeRunner(first)
+        return enforcement === 'unusable' ? 'unavailable' : { runner: first, enforcement }
+      }
+      return { runner: first, enforcement: STATIC_ENFORCEMENT[first] }
+    }
     for (const runner of chain) {
       const enforcement = this.probeRunner(runner)
       if (enforcement !== 'unusable') return { runner, enforcement }
@@ -540,6 +567,12 @@ export class LocalSandboxProvider extends SandboxProvider {
           ?? (() => defaultProbeWindowsAcl(this.windowsAclRunnerInvocation(), this.probeTimeoutMs))
         return probe() ? 'partial' : 'unusable'
       }
+      case 'freebsd-jail': {
+        // The backend is a separate setuid helper; its mere presence is the
+        // functional probe — absence means the host has no usable jail backend.
+        const bin = this.freebsdJailRunBin()
+        return existsSync(bin) ? 'full' : 'unusable'
+      }
       default: return assertNever(runner)
     }
   }
@@ -552,6 +585,18 @@ export class LocalSandboxProvider extends SandboxProvider {
   /** The `sandbox-exec` executable to probe and exec (test hook over the system one). */
   private seatbeltExec(): string {
     return this.internals.seatbeltExec ?? 'sandbox-exec'
+  }
+
+  /**
+   * The `dsh-jail-run` setuid helper to probe and exec. Resolution order: the
+   * test hook (internals), then `DSH_JAIL_RUN_BIN`, then the default install
+   * path `/usr/local/sbin/dsh-jail-run`. The helper is a separate setuid-root
+   * binary (freebsd/dsh-jail-run.c) — see FREEBSD.md.
+   */
+  private freebsdJailRunBin(): string {
+    return this.internals.freebsdJailRunBin
+      ?? process.env.DSH_JAIL_RUN_BIN
+      ?? '/usr/local/sbin/dsh-jail-run'
   }
 
   /**

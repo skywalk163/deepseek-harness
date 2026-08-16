@@ -4,10 +4,22 @@
 # so it works no matter where the repo is cloned (no path editing required).
 # Invoked by dsh-web-restart.sh and the rc.d service.
 
-# Run unconfined: FreeBSD has no sandbox backend (confinement supports only
-# Linux/macOS/Windows), so it fails closed otherwise. Override with the env var
-# if you really want a different mode.
-export DSH_PERMISSION_MODE="${DSH_PERMISSION_MODE:-danger-full-access}"
+# FreeBSD now ships a real sandbox backend: the setuid `dsh-jail-run` jail
+# helper is selected automatically by the local sandbox provider, so agent
+# commands (code/mini/standard) run confined inside a jail instead of
+# unconfined. We therefore do NOT force danger-full-access. Leave
+# DSH_PERMISSION_MODE unset so the harness picks its default confined mode
+# (read-only / workspace-write per session). Set DSH_PERMISSION_MODE=
+# danger-full-access only as an explicit escape hatch when the helper cannot
+# run on a given host.
+if [ -n "${DSH_PERMISSION_MODE}" ]; then
+  export DSH_PERMISSION_MODE
+fi
+
+# Path to the setuid jail helper. The default install location is
+# /usr/local/sbin/dsh-jail-run; on hosts where /usr is a read-only mount
+# (this one) install it under /var instead and point here. See FREEBSD.md.
+export DSH_JAIL_RUN_BIN="${DSH_JAIL_RUN_BIN:-/var/dsh-jail-run}"
 
 # Make sure node/pnpm (from /usr/local) and the gmake shim (~/bin/make) are
 # found, whether launched from an interactive shell or at boot via rc.d
