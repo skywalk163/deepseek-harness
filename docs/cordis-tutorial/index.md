@@ -15,7 +15,7 @@ To write plugins for the harness itself — loaded from a `cordis.yml` and drive
 You need a clone of this repository with dependencies installed; the [development guide](../development.md#setup-tutorial) lists the prerequisites. No API key is needed for this tutorial; every example runs keylessly.
 
 ```sh
-git clone https://github.com/deepseek-ai/deepseek-harness.git
+git clone https://gitcode.com/skywalk163/deepseek-harness.git
 cd deepseek-harness
 pnpm install
 ```

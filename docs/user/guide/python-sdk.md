@@ -17,7 +17,7 @@ This tutorial is the programmatic alternative to the Web UI. It installs the pub
 Clone the repository for its runnable example, create a virtual environment, and install the SDK with its same-version bundled runtime:
 
 ```sh
-git clone https://github.com/deepseek-ai/deepseek-harness.git
+git clone https://gitcode.com/skywalk163/deepseek-harness.git
 cd deepseek-harness
 python -m venv .venv
 . .venv/bin/activate

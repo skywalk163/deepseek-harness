@@ -37,11 +37,14 @@ pnpm dsh web
 
 ### 在 FreeBSD 上从源码运行
 
+> **FreeBSD 请用本 fork——尚未合并到上游。** FreeBSD 移植（修复 `process-inspector` 的 ps 语法、`terminal-bash` 默认 shell、`crypto.randomUUID` polyfill，以及仅环回地址的信任围栏）**维护在本仓库**，并且**尚未合并进上游 `deepseek-ai/deepseek-harness`**。在合并落地前，请克隆**本仓库**而非上游，否则会缺少 FreeBSD 修复。
+> 镜像：`https://github.com/skywalk163/deepseek-harness.git`
+
 DeepSeek Harness 可以在 FreeBSD 上运行（已在 FreeBSD 14.3-RELEASE amd64 + Node 24
 上验证）。所有 FreeBSD 相关的适配都已固化在 `pnpm-workspace.yaml` 中，clone 之后走标准流程即可：
 
 ```sh
-git clone https://github.com/deepseek-ai/deepseek-harness.git
+git clone https://gitcode.com/skywalk163/deepseek-harness.git
 cd deepseek-harness
 pnpm install
 pnpm run build
