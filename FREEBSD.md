@@ -227,6 +227,8 @@ sh /tmp/dsh-jail-test.sh   # drops to caller uid, cwd=/workspace, ro denies writ
 
 ---
 
+> For a detailed deployment & troubleshooting manual, see **`freebsd-sandbox.md`** (English) and **`freebsd-sandbox.zh.md`** (Chinese).
+
 ## 9. Run the Web UI
 
 ```sh

@@ -227,6 +227,8 @@ sh /tmp/dsh-jail-test.sh   # 降权到调用者 uid、cwd=/workspace、只读拒
 
 ---
 
+> 详细部署 / 排错手册见 **`freebsd-sandbox.zh.md`**（中文）与 **`freebsd-sandbox.md`**（英文）。
+
 ## 9. 运行 Web UI
 
 ```sh
