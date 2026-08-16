@@ -132,15 +132,35 @@ export class SandboxUnavailableError extends HarnessError {
   constructor(mode: ConfinedSandboxMode, detail?: string) {
     super(
       `sandbox mode "${mode}" is requested but no sandbox backend is usable on this host; `
-      + 'refusing to run the command unconfined. Install bubblewrap or run a Landlock-enforcing '
-      + 'kernel (Linux), ensure sandbox-exec is usable (macOS), or ensure the ACL '
-      + 'restricted-token runner can start (Windows) — otherwise switch the consumer to '
-      + 'danger-full-access.'
+      + 'refusing to run the command unconfined. '
+      + sandboxUnavailableHint()
       + (detail === undefined ? '' : ` Runner failure: ${detail}`),
       SANDBOX_UNAVAILABLE,
     )
     this.name = 'SandboxUnavailableError'
   }
+}
+
+/**
+ * Platform-specific recovery guidance appended to {@link SandboxUnavailableError}.
+ * FreeBSD ships no sandbox backend in this build — the runners it knows are
+ * Linux bwrap/Landlock, macOS Seatbelt, and the Windows ACL restricted-token
+ * runner — so the generic "install bubblewrap" advice does not apply. The only
+ * way to run a confined consumer on FreeBSD is to switch it to
+ * `danger-full-access`; spell that out so a FreeBSD operator is not sent
+ * looking for a Linux/macOS/Windows runner that will never exist on their host.
+ * Every other platform keeps the original runner-install guidance verbatim.
+ */
+function sandboxUnavailableHint(): string {
+  if (process.platform === 'freebsd') {
+    return 'This host runs FreeBSD, which this build does not ship a sandbox backend for '
+      + '(no bwrap, Landlock, Seatbelt, or Windows ACL runner). Run the consumer unconfined by '
+      + 'switching it to `danger-full-access`: launch with DSH_PERMISSION_MODE=danger-full-access, '
+      + 'or pick the danger-full-access permission preset in the UI. '
+  }
+  return 'Install bubblewrap or run a Landlock-enforcing kernel (Linux), ensure sandbox-exec '
+    + 'is usable (macOS), or ensure the ACL restricted-token runner can start (Windows) '
+    + '— otherwise switch the consumer to danger-full-access.'
 }
 
 declare module '@deepseek-ai/cordis' {

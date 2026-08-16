@@ -191,7 +191,16 @@ DSH_PERMISSION_MODE=danger-full-access pnpm dsh:freebsd web
 ```
 
 - `dsh:freebsd` = 普通 `dsh` + `--expose-internals`。FreeBSD 上 HMR 服务必须该 flag，且**不能**经 `NODE_OPTIONS` 传（`node-addon-require-builtin` 只发布 darwin/linux/win32 预编译，FreeBSD 无原生包也无源码兜底）。
-- `DSH_PERMISSION_MODE=danger-full-access`：FreeBSD 无沙箱后端（confinement 只支持 Linux/macOS/Windows），会 fail-closed 中止启动；该变量让 agent 以**非隔离**方式运行。**只在你愿意让 agent 修改的机器上这样跑。**
+- **`DSH_PERMISSION_MODE=danger-full-access` 在 FreeBSD 上是必选项。** harness 不发行 FreeBSD 沙箱后端——confinement 只认识 Linux 的 bwrap/Landlock、macOS 的 Seatbelt、以及 Windows 的 ACL 受限令牌 runner。任何**受限**模式（`read-only` / `workspace-write`）都会**fail-closed** 并拒绝以非隔离方式运行命令。该变量让 agent 以**非隔离**方式运行，这是 FreeBSD 上目前唯一受支持的运作方式。**只在你愿意让 agent 修改的机器上这样跑。**
+- ⚠️ **`code` / `mini` 模式恰恰栽在这里。** 它们把持久 PTY bash 会话经由*受沙箱约束的* bash executor 驱动。若某会话**未**处于 `danger-full-access`（你保留着 Web 默认的 `workspace-write`，或存储的 UI 权限预设是 `workspace-write`），每条 `bash`/`ls`/文件命令都会中止并报：
+  ```
+  Error: sandbox mode "workspace-write" is requested but no sandbox backend is usable on this host;
+  refusing to run the command unconfined. This host runs FreeBSD, which this build does not ship a
+  sandbox backend for (no bwrap, Landlock, Seatbelt, or Windows ACL runner). Run the consumer
+  unconfined by switching it to `danger-full-access`: launch with DSH_PERMISSION_MODE=danger-full-access,
+  or pick the danger-full-access permission preset in the UI.
+  ```
+  该报错**是设计如此（fail-closed），并非崩溃。** 在启动前设 `DSH_PERMISSION_MODE=danger-full-access`（推荐修复），或在 UI 中选 **danger-full-access** 权限预设，该模式即以非隔离方式运行。
 - 默认监听 `http://127.0.0.1:3080`。
 
 ---
@@ -272,7 +281,7 @@ git -c core.hooksPath=/tmp/nohooks push <remote> <branch>
 | `Could not load the "sharp" module using the freebsd-x64 runtime` | `sharp` 无 FreeBSD 原生二进制，需走 WASM | 保留 `pnpm-workspace.yaml` 的 `supportedArchitectures`（`os: freebsd`，`cpu` 含 `wasm32`）与 `sharp` `packageExtensions`。 |
 | `@deepseek-ai/dsh-client-ui-*` 报 `ERR_MODULE_NOT_FOUND` | 工作区插件未 hoist | 保留 `shamefullyHoist: true`。 |
 | `--expose-internals is required for HMR service` | FreeBSD 无 `node-addon-require-builtin` 预编译 | 用 `dsh:freebsd` 脚本（自带 `--expose-internals`）；不能放 `NODE_OPTIONS`。 |
-| 启动中止 / 沙箱 fail-closed | 无 FreeBSD 沙箱后端 | 用 `DSH_PERMISSION_MODE=danger-full-access`（非隔离运行）。 |
+| `code` / `mini` 模式报 `sandbox mode "..." is requested but no sandbox backend is usable`（`SANDBOX_UNAVAILABLE`） | FreeBSD 无沙箱后端，且会话未处于 `danger-full-access` | **启动前设 `DSH_PERMISSION_MODE=danger-full-access`**（推荐），或在 UI 中选 **danger-full-access** 权限预设。这是设计上的 fail-closed，不是崩溃——见第 9 步。 |
 | `crypto.randomUUID is not a function` | 非安全上下文（plain http / 非 localhost） | 经 `http://localhost:3080`（SSH 隧道）访问。 |
 | `transport failure for /api/host.listDirectory: HTTP 403` | 环回信任围栏拒绝非 loopback `Host` | 用 SSH 隧道 / `localhost`，别用反代或 LAN IP。 |
 | `node-pty` 编译失败 / ETIMEDOUT 拉 Node 头文件 | node-gyp 拉不到头文件 | 保留 `.npmrc` 的 `disturl`；确保 gmake shim 在 `PATH`。 |

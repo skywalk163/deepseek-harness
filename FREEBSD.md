@@ -191,7 +191,16 @@ DSH_PERMISSION_MODE=danger-full-access pnpm dsh:freebsd web
 ```
 
 - `dsh:freebsd` = normal `dsh` + `--expose-internals`. On FreeBSD the HMR service requires that flag, and it **cannot** be passed via `NODE_OPTIONS` (`node-addon-require-builtin` only ships darwin/linux/win32 prebuilds; no FreeBSD native package and no source fallback).
-- `DSH_PERMISSION_MODE=danger-full-access`: FreeBSD has no sandbox backend (confinement supports only Linux/macOS/Windows), so it fail-closed and aborts startup; this variable runs the agent **unconfined**. Only do it on a machine you are willing to let the agent modify.
+- **`DSH_PERMISSION_MODE=danger-full-access` is MANDATORY on FreeBSD.** The harness ships no FreeBSD sandbox backend — confinement knows only Linux bwrap/Landlock, macOS Seatbelt, and the Windows ACL restricted-token runner. Any *confined* mode (`read-only` / `workspace-write`) therefore **fails closed** and refuses to run the command unconfined. This variable runs the agent **unconfined**, which is the only supported way to operate on FreeBSD today. Only do it on a machine you are willing to let the agent modify.
+- ⚠️ **`code` / `mini` modes are exactly where this bites.** They drive a persistent PTY bash session through the *sandbox-confined* bash executor. If a session is **not** in `danger-full-access` (you left the web default `workspace-write`, or a stored UI permission preset is `workspace-write`), every `bash`/`ls`/file command aborts with:
+  ```
+  Error: sandbox mode "workspace-write" is requested but no sandbox backend is usable on this host;
+  refusing to run the command unconfined. This host runs FreeBSD, which this build does not ship a
+  sandbox backend for (no bwrap, Landlock, Seatbelt, or Windows ACL runner). Run the consumer
+  unconfined by switching it to `danger-full-access`: launch with DSH_PERMISSION_MODE=danger-full-access,
+  or pick the danger-full-access permission preset in the UI.
+  ```
+  This error is **by design (fail-closed), not a crash.** Set `DSH_PERMISSION_MODE=danger-full-access` *before* launching (the recommended fix), or select the **danger-full-access** permission preset in the UI, and the mode runs unconfined.
 - Listens on `http://127.0.0.1:3080` by default.
 
 ---
@@ -272,7 +281,7 @@ git -c core.hooksPath=/tmp/nohooks push <remote> <branch>
 | `Could not load the "sharp" module using the freebsd-x64 runtime` | `sharp` has no FreeBSD native binary; WASM path not installed | Keep `supportedArchitectures` (`os: freebsd`, `cpu` includes `wasm32`) and the `sharp` `packageExtensions` in `pnpm-workspace.yaml`. |
 | `ERR_MODULE_NOT_FOUND` for `@deepseek-ai/dsh-client-ui-*` | workspace plugins not hoisted | Keep `shamefullyHoist: true` in `pnpm-workspace.yaml`. |
 | `--expose-internals is required for HMR service` | native-addon route unavailable on FreeBSD | Use the `dsh:freebsd` script (adds `--expose-internals`). Flag cannot go in `NODE_OPTIONS`. |
-| startup aborts / sandbox fail-closed | no FreeBSD sandbox backend | Launch with `DSH_PERMISSION_MODE=danger-full-access` (unconfined). |
+| `sandbox mode "..." is requested but no sandbox backend is usable` (`SANDBOX_UNAVAILABLE`) in `code` / `mini` mode | FreeBSD has no sandbox backend; the session is not in `danger-full-access` | **Set `DSH_PERMISSION_MODE=danger-full-access` at launch** (recommended), or pick the **danger-full-access** permission preset in the UI. This is fail-closed-by-design, not a crash — see step 9. |
 | `crypto.randomUUID is not a function` | non-secure context (plain http, non-localhost) | Browse via `http://localhost:3080` (SSH tunnel). Polyfill included, but prefer localhost. |
 | `transport failure for /api/host.listDirectory: HTTP 403` | loopback trust fence rejects non-loopback `Host` | Reach the UI via SSH tunnel / `localhost` (see step 10). Do **not** use a reverse proxy or LAN IP. |
 | `node-pty` build fails / ETIMEDOUT fetching Node headers | node-gyp cannot reach headers | Keep `disturl=https://registry.npmmirror.com/-/binary/node` in `.npmrc`; ensure the gmake shim is on `PATH`. |

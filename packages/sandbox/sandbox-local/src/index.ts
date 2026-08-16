@@ -163,6 +163,12 @@ const PLATFORM_CHAINS: Record<string, readonly SelectedRunner['runner'][]> = {
   // a sole candidate, selected without a probe — its execution-time refusal
   // fails closed through its stderr signature (windows-acl-run:) and exit 127.
   win32: ['windows-acl'],
+  // FreeBSD ships no sandbox backend in this build (no bwrap, Landlock, Seatbelt,
+  // or Windows ACL runner), so its chain is empty and `confine()` fails closed
+  // with SANDBOX_UNAVAILABLE — the operator must run the consumer unconfined via
+  // `danger-full-access`. Kept explicit (rather than relying on the `?? []`
+  // fallback) so the unsupported platform is documented in code.
+  freebsd: [],
 }
 
 /**
