@@ -4,12 +4,18 @@
 # actions, Wine/Windows legs and failover pools — none of which apply to the
 # FreeBSD host runner on this Gitea instance (fb5-freebsd, labels
 # freebsd/freebsd-14.3/self-hosted, host mode, no Docker). This port keeps the
-# signal that matters on FreeBSD: immutable install, host lib build, web build,
-# and the static gate aggregate.
+# signal that matters on FreeBSD: immutable install, the full `pnpm run build`
+# (host lib + client lib + web), and the static gate aggregate.
 #
-# Verified on this exact box: pnpm install --frozen-lockfile, pnpm run
-# build:lib:host, pnpm run build:web and pnpm run check:ci:static all pass on
-# FreeBSD 14.3 / Node 24 / pnpm 11.7.0.
+# NOTE: the web build resolves workspace packages through their `exports` map,
+# which points at built `lib/` output (e.g. @deepseek-ai/dsh-client-ui-theme/
+# styles/* -> lib/styles/*). A fresh checkout has no lib/, so the full `build`
+# command (which builds the client lib first) is REQUIRED before build:web.
+# Splitting out only `build:lib:host` makes vite fail with ENOENT on
+# lib/styles/base.css — this is exactly the upstream `ci-primary` ordering.
+#
+# Verified on this exact box: pnpm install --frozen-lockfile, pnpm run build and
+# pnpm run check:ci:static all pass on FreeBSD 14.3 / Node 24 / pnpm 11.7.0.
 #
 # Unit tests (`pnpm test`) are intentionally a separate opt-in job: the full
 # suite has ~60 FreeBSD-specific environment failures (e.g. @vscode/ripgrep
@@ -43,7 +49,7 @@ jobs:
   node-24:
     runs-on: freebsd
     name: node 24 / build + static gates
-    timeout-minutes: 60
+    timeout-minutes: 90
     steps:
       # Always the local action repo — a bare `actions/checkout@v4` can
       # intermittently resolve to github.com and fail (docs/LOCAL_CI.md §6.4).
@@ -71,11 +77,8 @@ jobs:
       - name: Install (immutable)
         run: pnpm install --frozen-lockfile
 
-      - name: Build lib (host)
-        run: pnpm run build:lib:host
-
-      - name: Build web
-        run: pnpm run build:web
+      - name: Build (host lib + client lib + web)
+        run: pnpm run build
 
       - name: Static gates (lint / typecheck / catalogs / docs)
         run: pnpm run check:ci:static
