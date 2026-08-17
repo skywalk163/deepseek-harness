@@ -36,7 +36,12 @@ on:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: ${{ github.event_name != 'push' }}
+  # Critical on the 8 GB / 4-core runner that ALSO hosts `dsh web`: two
+  # overlapping CI runs (e.g. two quick pushes) stack their full `tsc -b`
+  # builds and together blow past RAM -> kernel OOM-kill (exit 137). Cancelling
+  # the in-progress run on a new push guarantees only ONE build runs at a time,
+  # which is what keeps the build within the box's memory budget.
+  cancel-in-progress: true
 
 permissions:
   contents: read
