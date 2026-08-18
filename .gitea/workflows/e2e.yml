@@ -60,24 +60,37 @@ jobs:
 
       # The real-API e2e needs DEEPSEEK_API_KEY_EXTERNAL (a Gitea repo secret
       # that is NOT wired into this self-hosted instance). Without it the suites
-      # self-skip, so we don't hard-fail: we note it and skip the job cleanly.
-      # Configure the repository secret if you want real-API coverage.
+      # self-skip, so we don't hard-fail: the preflight records an output and the
+      # build/run steps are guarded on that OUTPUT (not on `secrets.*` in `if:` —
+      # Gitea Actions does not substitute secrets inside `if:` expressions, so a
+      # secret-based `if` never skips and would spawn a full build). Configure the
+      # repository secret if you want real-API coverage; absent it, the job skips
+      # cleanly (neutral, not a pass, not a failure).
       - name: Preflight (require DEEPSEEK_API_KEY)
+        id: preflight
         env:
           DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY_EXTERNAL }}
         run: |
           if [ -z "${DEEPSEEK_API_KEY:-}" ]; then
+            echo "has_key=false" >> "$GITHUB_OUTPUT"
             echo "::notice::DEEPSEEK_API_KEY_EXTERNAL is not configured — skipping real-API e2e (clean skip, not a pass)."
           else
+            echo "has_key=true" >> "$GITHUB_OUTPUT"
             echo "DEEPSEEK_API_KEY present."
           fi
 
       - name: Build (lib for the e2e example bins)
-        if: ${{ secrets.DEEPSEEK_API_KEY_EXTERNAL != '' }}
-        run: pnpm run build
+        if: ${{ steps.preflight.outputs.has_key == 'true' }}
+        run: |
+          set -eu
+          NCPU=$(sysctl -n hw.ncpu)
+          HALF=$(( NCPU / 2 )); [ "$HALF" -lt 1 ] && HALF=1
+          MASK="0-$(( HALF - 1 ))"
+          echo "::notice::building with 'cpuset -l $MASK' (half of $NCPU cores) to bound tsc memory"
+          cpuset -l "$MASK" pnpm run build
 
       - name: E2E tests (real DeepSeek API)
-        if: ${{ secrets.DEEPSEEK_API_KEY_EXTERNAL != '' }}
+        if: ${{ steps.preflight.outputs.has_key == 'true' }}
         env:
           DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY_EXTERNAL }}
           DEEPSEEK_BASE_URL: https://api.deepseek.com
