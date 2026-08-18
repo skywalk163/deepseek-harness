@@ -90,13 +90,17 @@ jobs:
       # self-validating via .tsbuildinfo, so reusing across commits is safe; the
       # stamp (node/pnpm version + build-config hash) invalidates on toolchain or
       # build-script change. Without this every CI run rebuilds 230+ pkg lib from
-      # scratch (~15-20 min); a HIT drops unchanged trees to seconds and — because
+      # scratch (~6 min); a HIT drops unchanged trees to seconds and — because
       # tsc -b then skips unchanged packages — also uses far less memory than a
       # full build (which is what makes the OOM below survivable on a MISS).
+      # NOTE: the cache MUST live outside /var/db/act_runner — act_runner wipes
+      # its entire data dir between runs, so a cache there would never persist.
+      # /var/tmp is world-writable and survives between runs (only cleared on a
+      # full reboot), which is exactly what we need for a cross-run HIT.
       - name: Restore build cache
         run: |
           set -eu
-          CACHE_ROOT=/var/db/act_runner/ci-cache/dsh
+          CACHE_ROOT=/var/tmp/dsh-ci-cache/dsh
           mkdir -p "$CACHE_ROOT"
           STAMP="node-$(node -v)-pnpm-$(pnpm -v)-$(cat tsconfig.host.json tsconfig.client.json tsdown.config.ts pnpm-lock.yaml | sha256 -q - 2>/dev/null || python3 -c 'import sys,hashlib;print(hashlib.sha256(sys.stdin.buffer.read()).hexdigest())')"
           printf '%s' "$STAMP" > "$CACHE_ROOT/newstamp"
@@ -133,13 +137,17 @@ jobs:
 
       - name: Save build cache
         run: |
-          set -eu
-          CACHE_ROOT=/var/db/act_runner/ci-cache/dsh
+          set -u
+          CACHE_ROOT=/var/tmp/dsh-ci-cache/dsh
+          mkdir -p "$CACHE_ROOT"
           { find . -path '*/node_modules' -prune -o -name '*.tsbuildinfo' -print
             find . -type d -name lib -not -path '*/node_modules/*' -print; } > /tmp/dsh_cache_list.txt
-          tar -czf "$CACHE_ROOT/artifacts.tar.gz" -T /tmp/dsh_cache_list.txt
-          cp "$CACHE_ROOT/newstamp" "$CACHE_ROOT/stamp"
-          echo "::notice::build cache SAVED"
+          if tar -czf "$CACHE_ROOT/artifacts.tar.gz" -T /tmp/dsh_cache_list.txt 2>/tmp/dsh_tar.err; then
+            cp "$CACHE_ROOT/newstamp" "$CACHE_ROOT/stamp"
+            echo "::notice::build cache SAVED"
+          else
+            echo "::warning::build cache SAVE failed ($(head -1 /tmp/dsh_tar.err)); continuing without cache"
+          fi
 
       - name: Static gates (lint / typecheck / catalogs / docs)
         run: pnpm run check:ci:static
