@@ -51,3 +51,18 @@
 
 ## Conclusion
 Current master (`8d0ac97fe6`) builds (incremental) and starts on 1.5 with **zero errors**. This run recorded 3 non-blocking issues (pgrep self-match, `dsh_ssh.py` argument order, daemon-start timeout), all tooling/command-usage problems, none in repo code.
+
+---
+
+## 0.88 (192.168.0.88 / fb98) same-version drill (evening 2026-08-18)
+
+- Host: FreeBSD 15.1-RELEASE-p1, 64 GB RAM (free ~24 GB), node v24.18.0; repo `/home/skywalk/github/deepseek-harness` (**owned by skywalk**), connecting user `workbuddy` (wheel group, sudo).
+- Initial state: HEAD=9d1a0a6097 (10 commits behind); old web running (HTTP 200).
+- Alignment & start: `git fetch origin` (origin=gitcode) → `git reset --hard origin/master` (=7d588f4fe3) → `pnpm run build` (incremental, BUILD_RC=0, web 14.85 s) → `dsh-web-restart.sh start` → verified: HTTP 200, `sockstat` shows `skywalk node 3116 tcp4 127.0.0.1:3080`, `dsh_web.log` 0 errors, `verify-sandbox.mjs` **10/10 PASS**.
+- **0.88-specific operational notes (differ from 1.5)**:
+  1. **git dubious ownership**: workbuddy accessing skywalk-owned repo is blocked by git's safety check → run `git config --global --add safe.directory /home/skywalk/github/deepseek-harness` first (workbuddy global).
+  2. **workbuddy cannot write the repo** (`touch` fails, `.git/FETCH_HEAD` Permission denied) → do all repo operations as skywalk:
+     `python tools/ssh_run_88.py --sudo "su - skywalk -c 'sh /tmp/xxx.sh'"` (script uploaded via `--file` first).
+  3. **boxrun.e2e.ts leftover**: an untracked local copy (0600) imports the removed `boxrunProfileArgs`, which breaks `tsc -b` → master already deleted the file; `mv` the leftover to /tmp as backup and do NOT restore it after building.
+  4. **daemon start hits the same paramiko PipeTimeout** (same family as 1.5) → verify on a fresh channel after the timeout.
+- Conclusion: both hosts (1.5 / 0.88) now run master `7d588f4fe3` with zero-error builds, web HTTP 200, sandbox 10/10 — identical state.

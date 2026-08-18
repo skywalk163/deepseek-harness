@@ -51,3 +51,17 @@
 
 ## 结论
 当前 master（8d0ac97fe6）在 1.5 上可**零报错**完成 增量构建 + 启动；本次共记录 3 个非阻塞小问题（pgrep 自匹配、dsh_ssh.py 参数位、daemon 启动超时），均为工具/命令用法问题，无仓库代码问题。
+
+---
+
+## 0.88（192.168.0.88 / fb98）同版本演练（2026-08-18 晚）
+
+- 机器：FreeBSD 15.1-RELEASE-p1，内存 64GB（free ~24GB），node v24.18.0；仓库 `/home/skywalk/github/deepseek-harness`（**skywalk 所有**），连接用户 workbuddy（wheel 组，可 sudo）。
+- 现状：HEAD=9d1a0a6097（落后 10 个提交）；旧版 web 在跑（HTTP 200）。
+- 对齐与启动：`git fetch origin`（origin=gitcode）→ `git reset --hard origin/master`（=7d588f4fe3）→ `pnpm run build`（增量，BUILD_RC=0，web 14.85s）→ `dsh-web-restart.sh start` → 验证：HTTP 200、`sockstat` 显示 `skywalk node 3116 tcp4 127.0.0.1:3080`、`dsh_web.log` 错误 0 条、`verify-sandbox.mjs` **10/10 PASS**。
+- **0.88 特有操作注意（与 1.5 不同）**：
+  1. **git dubious ownership**：workbuddy 访问 skywalk 所有的仓库被 git 安全机制拦截 → 先 `git config --global --add safe.directory /home/skywalk/github/deepseek-harness`（workbuddy 全局）。
+  2. **workbuddy 对仓库无写权限**（`touch` 失败、`.git/FETCH_HEAD` Permission denied）→ 仓库操作一律以 skywalk 身份：`python tools/ssh_run_88.py --sudo "su - skywalk -c 'sh /tmp/xxx.sh'"`（脚本先由 `--file` 上传到 /tmp）。
+  3. **boxrun.e2e.ts 残留坑**：本地未跟踪副本（0600）引用已删除的 `boxrunProfileArgs`，会让 `tsc -b` 中断 → master 已删除该文件，本地残留 `mv` 到 /tmp 备份即可，build 后勿还原。
+  4. **daemon start 同样 paramiko PipeTimeout**（与 1.5 同族）→ 超时后另开通道独立验证。
+- 结论：两机（1.5 / 0.88）当前均运行 master 7d588f4fe3，构建零报错、web HTTP 200、沙箱 10/10，状态一致。
