@@ -69,7 +69,7 @@ minimumReleaseAgeExclude:
   - node-addon-require-builtin@0.1.4
 
 patchedDependencies:
-  node-pty@1.1.0: patches/node-pty@1.1.0.patch
+  node-pty@1.2.0-beta.15: patches/node-pty@1.2.0-beta.15.patch
 
 # --- FreeBSD support (added for the FreeBSD port) ---
 # pnpm v11 reads these from pnpm-workspace.yaml, NOT package.json's `pnpm` field.

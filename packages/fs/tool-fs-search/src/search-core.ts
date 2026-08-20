@@ -19,8 +19,8 @@
  * @module @deepseek-ai/dsh-tool-fs-search/search-core
  */
 
-import { isAbsolute, relative, sep } from 'node:path'
 import { existsSync } from 'node:fs'
+import { isAbsolute, relative, sep } from 'node:path'
 import { execSync } from 'node:child_process'
 import type { Context } from '@deepseek-ai/cordis'
 import { HarnessError } from '@deepseek-ai/dsh-llm'
@@ -160,12 +160,11 @@ function completeStdout(toolName: string, stdout: SubprocessOutputRead, rawOutpu
  * system `rg` installed after the process started is picked up on the very
  * next search without having to restart the harness.
  *
- * `@vscode/ripgrep` resolves its platform package (`@vscode/ripgrep-<platform>
- * -<arch>`) at module evaluation, so a static import would turn a missing or
- * corrupt platform package (`pnpm install --omit=optional`, partial install)
- * into a failure of the whole Loader composition. Resolving at the call
- * boundary keeps that failure at the first search call as `SEARCH_FAILED` —
- * the package's documented no-load-time-probe contract.
+ * A single-file runtime uses the executable's `-rg` sidecar because a native
+ * helper cannot be spawned from pkg's virtual filesystem. Node-mode builds
+ * fall back to the platform package selected by `@vscode/ripgrep`. Resolving
+ * at the call boundary keeps a missing or corrupt binary at the first search
+ * call as `SEARCH_FAILED`, rather than failing the Loader composition.
  *
  * Resolution order (so the grep/glob tools also work on platforms — notably
  * FreeBSD — where `@vscode/ripgrep` ships no native binary):
@@ -178,6 +177,7 @@ function completeStdout(toolName: string, stdout: SubprocessOutputRead, rawOutpu
  * @returns the chosen binary's absolute path; the promise rejects
  *   when no platform package can be resolved and none of the fallbacks exist.
  */
+export function resolveRgPath(): Promise<string> {
 export function resolveRgPath(): Promise<string> {
   return (async (): Promise<string> => {
     const override = process.env.DSH_RIPGREP_PATH
@@ -198,6 +198,7 @@ export function resolveRgPath(): Promise<string> {
     // original SEARCH_FAILED instead of an obscure undefined-path error.
     return (await import('@vscode/ripgrep')).rgPath
   })()
+}
 }
 
 /**
