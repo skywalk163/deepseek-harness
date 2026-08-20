@@ -30,3 +30,31 @@ index 6966d24..18f1d25 100644
  var DEFAULT_FILE = 'sh';
  var DEFAULT_NAME = 'xterm';
  var DESTROY_SOCKET_TIMEOUT_MS = 200;
+diff --git a/src/unix/pty.cc b/src/unix/pty.cc
+index 3b7d3dc..3c77c57 100644
+--- a/src/unix/pty.cc
++++ b/src/unix/pty.cc
+@@ -112,7 +112,7 @@ struct ExitEvent {
+   int exit_code = 0, signal_code = 0;
+ };
+ 
+-#if defined(__linux__)
++#if defined(__linux__) || defined(__FreeBSD__)
+ 
+ static int
+ SetCloseOnExec(int fd) {
+@@ -130,12 +130,14 @@ SetCloseOnExec(int fd) {
+  */
+ static void
+ pty_close_inherited_fds() {
++#if defined(__linux__)
+   // Try close_range() first (Linux 5.9+, glibc 2.34+)
+   #if defined(SYS_close_range) && defined(CLOSE_RANGE_CLOEXEC)
+   if (syscall(SYS_close_range, 3, ~0U, CLOSE_RANGE_CLOEXEC) == 0) {
+     return;
+   }
+   #endif
++#endif
+ 
+   int fd;
+   // Set the CLOEXEC flag on all open descriptors. Unconditionally try the first

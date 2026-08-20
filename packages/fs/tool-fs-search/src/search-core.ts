@@ -178,7 +178,6 @@ function completeStdout(toolName: string, stdout: SubprocessOutputRead, rawOutpu
  *   when no platform package can be resolved and none of the fallbacks exist.
  */
 export function resolveRgPath(): Promise<string> {
-export function resolveRgPath(): Promise<string> {
   return (async (): Promise<string> => {
     const override = process.env.DSH_RIPGREP_PATH
     if (override !== undefined && existsSync(override)) return override
@@ -198,7 +197,6 @@ export function resolveRgPath(): Promise<string> {
     // original SEARCH_FAILED instead of an obscure undefined-path error.
     return (await import('@vscode/ripgrep')).rgPath
   })()
-}
 }
 
 /**

@@ -11,7 +11,7 @@ overrides:
 packageExtensionsChecksum: sha256-wL7od7DfVQFCPGuFgQYh2UHvX0MTwc+D6rrFPusxsRk=
 
 patchedDependencies:
-  node-pty@1.2.0-beta.15: b40ae545608897914bd25fb009c97eeac478c34e8a910298ddcb01b746534bb0
+  node-pty@1.2.0-beta.15: 2798be81215bfd2bb45af2f40777121aae8905e30d7e21f17645851716391d07
 
 importers:
 
@@ -7837,7 +7837,7 @@ importers:
         version: 3.1.1
       node-pty:
         specifier: 1.2.0-beta.15
-        version: 1.2.0-beta.15(patch_hash=b40ae545608897914bd25fb009c97eeac478c34e8a910298ddcb01b746534bb0)
+        version: 1.2.0-beta.15(patch_hash=2798be81215bfd2bb45af2f40777121aae8905e30d7e21f17645851716391d07)
     devDependencies:
       '@deepseek-ai/cordis':
         specifier: workspace:^
@@ -19033,7 +19033,7 @@ snapshots:
       fetch-blob: 3.2.0
       formdata-polyfill: 4.0.10
 
-  node-pty@1.2.0-beta.15(patch_hash=b40ae545608897914bd25fb009c97eeac478c34e8a910298ddcb01b746534bb0):
+  node-pty@1.2.0-beta.15(patch_hash=2798be81215bfd2bb45af2f40777121aae8905e30d7e21f17645851716391d07):
     dependencies:
       node-addon-api: 7.1.1
 
