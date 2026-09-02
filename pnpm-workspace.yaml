@@ -77,19 +77,35 @@ minimumReleaseAgeExclude:
 patchedDependencies:
   node-pty@1.2.0-beta.15: patches/node-pty@1.2.0-beta.15.patch
 
-# --- FreeBSD support (added for the FreeBSD port) ---
+# --- Cross-platform native binary support (FreeBSD port + CI + dev machines) ---
 # pnpm v11 reads these from pnpm-workspace.yaml, NOT package.json's `pnpm` field.
-# Force-install sharp's FreeBSD/WASM runtime: sharp ships NO native freebsd-x64
-# binary, so the wasm fallback (@img/sharp-freebsd-wasm32 -> @img/sharp-wasm32)
-# is the only working image backend on FreeBSD.
+# - `freebsd` + `wasm32`: force-install sharp's FreeBSD/WASM runtime. sharp ships
+#   NO native freebsd-x64 binary, so the wasm fallback
+#   (@img/sharp-freebsd-wasm32 -> @img/sharp-wasm32) is the only working image
+#   backend on FreeBSD.
+# - `linux`/`darwin`/`win32` + `arm64` + `libc: [glibc, musl]`: REQUIRED so that
+#   `pnpm install` on non-FreeBSD hosts (GitHub linux-x64 CI runner, macOS/Windows
+#   dev machines) actually fetches the platform-native optional binaries
+#   (lightningcss-linux-x64-gnu, @esbuild/linux-x64, rollup-linux-x64-gnu, ...).
+#   Without these, tsdown/esbuild fail at runtime with
+#   "Cannot find module '...linux-x64-gnu.node'".
+# NOTE: `libc` MUST be `glibc`/`musl` — the formerly-used `any` is NOT a valid
+# value and silently filters out every glibc/musl-native optional dependency.
+# `os`/`cpu` are additive to the *current* platform, so listing freebsd here does
+# NOT drop the host's own binaries; it only broadens which optional deps are kept.
 supportedArchitectures:
   os:
     - freebsd
+    - linux
+    - darwin
+    - win32
   cpu:
     - x64
+    - arm64
     - wasm32
   libc:
-    - any
+    - glibc
+    - musl
 # Hoist every workspace + dependency package into the top-level node_modules so
 # the runtime loader's dynamic import('@deepseek-ai/dsh-client-ui-*') resolves.
 shamefullyHoist: true
