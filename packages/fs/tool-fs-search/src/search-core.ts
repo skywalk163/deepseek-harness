@@ -180,7 +180,8 @@ function completeStdout(toolName: string, stdout: SubprocessOutputRead, rawOutpu
 let rgPathPromise: Promise<string> | undefined
 
 export function resolveRgPath(): Promise<string> {
-  rgPathPromise ??= Promise.resolve().then(async () => {
+  if (rgPathPromise === undefined) {
+    rgPathPromise = (async () => {
     const override = process.env.DSH_RIPGREP_PATH
     if (override !== undefined && existsSync(override)) return override
     const executable = parse(process.execPath)
@@ -202,7 +203,8 @@ export function resolveRgPath(): Promise<string> {
     }
     return (await import('@vscode/ripgrep')).rgPath
   })()
-  return rgPathPromise
+  }
+  return rgPathPromise as Promise<string>
 }
 
 /**

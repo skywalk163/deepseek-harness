@@ -528,7 +528,7 @@ class FreeBSDProcessInspector extends PosixProcessInspector {
     }
   }
 
-  isStdinWaiting(_pgid: number): boolean {
+  isStdinWaiting(_pgid: number, _shellPid: number): boolean {
     return false
   }
 
@@ -544,16 +544,26 @@ class FreeBSDProcessInspector extends PosixProcessInspector {
     return freebsdProcessTable(this.internals).some(entry => entry.pid === identity.pid && entry.started === identity.started)
   }
 
+  snapshot(): ProcessSnapshot {
+    return new PosixProcessSnapshot(freebsdProcessTable(this.internals))
+  }
+
 }
 
-function freebsdProcessTable(internals: ProcessInspectorInternals): PsEntry[] {
+function freebsdProcessTable(internals: ProcessInspectorInternals): ProcessRow[] {
   return internals.exec('/bin/ps', ['-axo', 'pid,ppid,lstart'])
     .split('\n')
     .slice(1)
     .flatMap((line) => {
       const match = /^\s*(\d+)\s+(\d+)\s+(.+?)\s*$/.exec(line)
       if (match?.[1] === undefined || match[2] === undefined || match[3] === undefined) return []
-      return [{ pid: Number(match[1]), parentPid: Number(match[2]), started: match[3] }]
+      return [{
+        pid: Number(match[1]),
+        parentPid: Number(match[2]),
+        started: match[3],
+        session: undefined,
+        state: undefined,
+      }]
     })
 }
 
