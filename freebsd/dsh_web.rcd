@@ -3,6 +3,10 @@
 # PROVIDE: dsh_web
 # REQUIRE: NETWORKING
 # KEYWORD: shutdown
+#
+# Surfaces the generated auth token on start/restart so the operator can open
+# the web UI. DeepSeek web now requires a token; without printing it the user
+# cannot open the page.
 
 . /etc/rc.subr
 
@@ -15,6 +19,7 @@ load_rc_config $name
 : ${dsh_web_chdir:=""}
 : ${dsh_web_user:="workbuddy"}
 : ${dsh_web_projectdir:=""}
+: ${dsh_web_port:="3080"}
 : ${dsh_web_log:="${dsh_web_chdir}/dsh_web.log"}
 
 pidfile="${dsh_web_chdir}/dsh_web.pid"
@@ -30,8 +35,70 @@ required_dirs="${dsh_web_chdir}"
 # Fail fast with a clear message if the repo path is unset.
 if [ -z "$dsh_web_chdir" ]; then
     echo "dsh_web: dsh_web_chdir is not set." >&2
-    echo "Run:  sysrc dsh_web_chdir=\"\$(pwd)\"   (from inside the repo)" >&2
+    echo "Run:  sysrc dsh_web_chdir=\"$(pwd)\"   (from inside the repo)" >&2
     exit 1
 fi
+
+# Capture the current log length BEFORE launching so we only match the freshly
+# generated token (the log is appended, not truncated, across restarts).
+dsh_web_precmd() {
+    dsh_web_log_before=$(wc -l < "${dsh_web_log}" 2>/dev/null || echo 0)
+}
+
+# Stop the daemon AND its dsh node child. daemon -P only records the daemon
+# pid; killing just that leaves the node process orphaned and still holding the
+# port, which would make a subsequent start fail with EADDRINUSE.
+dsh_web_stop() {
+    if [ -f "$pidfile" ]; then
+        kill -TERM "$(cat "$pidfile")" 2>/dev/null
+    fi
+    pkill -f "[d]sh:freebsd" 2>/dev/null
+    local i
+    for i in $(seq 1 20); do
+        if sockstat -l -p "${dsh_web_port}" 2>/dev/null | grep -q "127.0.0.1:${dsh_web_port}"; then
+            sleep 1
+        else
+            break
+        fi
+    done
+    rm -f "$pidfile"
+}
+
+# Wait for the freshly generated auth token to appear in the log (from the line
+# count captured in dsh_web_precmd onward), then echo the full URL.
+dsh_web_wait_token() {
+    local i token start_line
+    start_line=$((dsh_web_log_before + 1))
+    for i in $(seq 1 45); do
+        token=$(tail -n +"$start_line" "${dsh_web_log}" 2>/dev/null | grep -oE "token=[A-Za-z0-9_-]+" | tail -1 | cut -d= -f2-)
+        if [ -n "$token" ]; then
+            break
+        fi
+        sleep 1
+    done
+    if [ -n "$token" ]; then
+        echo ""
+        echo "dsh web is up."
+        echo "Open:  http://127.0.0.1:${dsh_web_port}/?token=${token}"
+        echo "Log:   tail -f ${dsh_web_log}"
+    else
+        echo "dsh web launched but token not found yet; check ${dsh_web_log}"
+    fi
+}
+
+dsh_web_status() {
+    if sockstat -l -p "${dsh_web_port}" 2>/dev/null | grep -q "127.0.0.1:${dsh_web_port}"; then
+        echo "dsh_web is RUNNING on :${dsh_web_port}"
+        pgrep -f "[d]sh:freebsd" | while read p; do echo "  pid $p"; done
+    else
+        echo "dsh_web is NOT running"
+        return 1
+    fi
+}
+
+start_precmd="dsh_web_precmd"
+start_postcmd="dsh_web_wait_token"
+stop_cmd="dsh_web_stop"
+status_cmd="dsh_web_status"
 
 run_rc_command "$1"
