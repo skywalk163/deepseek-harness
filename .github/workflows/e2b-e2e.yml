@@ -5,6 +5,11 @@ name: E2E (E2B sandbox)
 on:
   workflow_dispatch:
 
+# Disabled 2026-09-02: this workflow requires the E2B_API_KEY_EXTERNAL repo
+# secret, which is not configured here; the preflight hard-fails when absent.
+# Re-enable by removing the `if: false` below (and configuring the secret).
+if: false
+
 permissions:
   contents: read
 

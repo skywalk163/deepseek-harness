@@ -16,6 +16,12 @@ on:
         default: claude-opus-4-8
         type: string
 
+# Disabled 2026-09-02: this workflow requires the AZURE_OPENAI_API_KEY_EXTERNAL
+# and ANTHROPIC_API_KEY_EXTERNAL repo secrets, which are not configured here;
+# the preflight hard-fails when absent. Re-enable by removing the `if: false`
+# below (and configuring the secrets).
+if: false
+
 permissions:
   contents: read
 
