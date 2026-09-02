@@ -121,11 +121,14 @@ jobs:
           #   1. Pin the build to the first half of the cores via `cpuset`
           #      (usable by the non-root runner user). tsc -b's worker pool then
           #      holds ~half the in-flight programs -> ~half the peak heap.
-          #   2. Build host + client lib SERIALLY (a previous parallel `&`/`wait`
+          #   2. Cap the per-process tsc heap via --max-old-space-size=3072 in the
+          #      build:lib:* scripts (package.json) so a single tsc -b cannot exhaust
+          #      the 8 GB box; cpuset bounds worker count, this bounds heap.
+          #   3. Build host + client lib SERIALLY (a previous parallel `&`/`wait`
           #      doubled peak memory and made OOM *more* likely).
           # The incremental cache above keeps HIT runs cheap and low-memory; this
           # only matters on a cache MISS. If a MISS still OOMs, the durable fix is
-          # adding swap on the runner (e.g. `swapctl -a /swapfile`).
+          # the per-process tsc heap is now capped at --max-old-space-size=3072 in the build:lib:* scripts (package.json); with cpuset + serial builds this fits the 8 GB runner. Swap is only a last resort.
           NCPU=$(sysctl -n hw.ncpu)
           HALF=$(( NCPU / 2 ))
           [ "$HALF" -lt 1 ] && HALF=1
