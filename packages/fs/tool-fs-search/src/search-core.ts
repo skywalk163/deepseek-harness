@@ -20,7 +20,7 @@
  */
 
 import { existsSync } from 'node:fs'
-import { isAbsolute, relative, sep } from 'node:path'
+import { isAbsolute, join, parse, relative, sep } from 'node:path'
 import { execSync } from 'node:child_process'
 import type { Context } from '@deepseek-ai/cordis'
 import { HarnessError } from '@deepseek-ai/dsh-llm'
@@ -177,10 +177,17 @@ function completeStdout(toolName: string, stdout: SubprocessOutputRead, rawOutpu
  * @returns the chosen binary's absolute path; the promise rejects
  *   when no platform package can be resolved and none of the fallbacks exist.
  */
+let rgPathPromise: Promise<string> | undefined
+
 export function resolveRgPath(): Promise<string> {
-  return (async (): Promise<string> => {
+  rgPathPromise ??= Promise.resolve().then(async () => {
     const override = process.env.DSH_RIPGREP_PATH
     if (override !== undefined && existsSync(override)) return override
+    const executable = parse(process.execPath)
+    const executableSidecar = process.platform === 'win32'
+      ? join(executable.dir, `${executable.name}-rg.exe`)
+      : `${process.execPath}-rg`
+    if ('pkg' in process && existsSync(executableSidecar)) return executableSidecar
     try {
       const packaged = (await import('@vscode/ripgrep')).rgPath
       if (packaged !== undefined && existsSync(packaged)) return packaged
@@ -188,15 +195,14 @@ export function resolveRgPath(): Promise<string> {
       // No platform package (e.g. FreeBSD) — fall through to a system binary.
     }
     try {
-      const onPath = execSync('command -v rg || which rg', { encoding: 'utf8' }).trim()
+      const onPath = execSync('command -v rg || which rg', { encoding: 'utf-8' }).trim()
       if (onPath.length > 0) return onPath
     } catch {
       // No system rg on PATH.
     }
-    // Reject with the (possibly missing) packaged path so spawn reports the
-    // original SEARCH_FAILED instead of an obscure undefined-path error.
     return (await import('@vscode/ripgrep')).rgPath
   })()
+  return rgPathPromise
 }
 
 /**

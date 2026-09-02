@@ -1,0 +1,95 @@
+--- a/boxrun.c
++++ b/boxrun.c
+@@ -310,6 +310,7 @@
+ 
+ 	/* Identity */
+ 	char *hostname;
++	char *chdir_path;        /* --chdir: working directory inside jail */
+ 	uid_t uid;
+ 	gid_t gid;
+ 	int change_uid;
+@@ -640,6 +641,7 @@
+ 	    "  --uid USER            Run as user (name or UID)\n"
+ 	    "  --gid GROUP           Run as group (name or GID)\n"
+ 	    "  --hostname NAME       Set hostname inside sandbox\n"
++	    "  --chdir DIR           Working directory inside sandbox (default /)\n"
+ 	    "\n"
+ 	    "Other:\n"
+ 	    "  -y                    Skip confirmation for --rw-* options\n"
+@@ -1992,6 +1994,7 @@
+ 	OPT_UID,
+ 	OPT_GID,
+ 	OPT_HOSTNAME,
++	OPT_CHDIR,
+ 	OPT_VERSION,
+ 	OPT_LONGHELP,
+ };
+@@ -2118,6 +2121,7 @@
+ 	{ "uid",                required_argument, NULL, OPT_UID },
+ 	{ "gid",                required_argument, NULL, OPT_GID },
+ 	{ "hostname",           required_argument, NULL, OPT_HOSTNAME },
++	{ "chdir",              required_argument, NULL, OPT_CHDIR },
+ 	{ "help",               no_argument,       NULL, 'h' },
+ 	{ "longhelp",           no_argument,       NULL, OPT_LONGHELP },
+ 	{ "version",            no_argument,       NULL, OPT_VERSION },
+@@ -2927,6 +2931,9 @@
+ 		case OPT_HOSTNAME:
+ 			cfg->hostname = optarg;
+ 			break;
++		case OPT_CHDIR:
++			cfg->chdir_path = optarg;
++			break;
+ 		case OPT_VERSION:
+ 			printf("boxrun %s\n", BOXRUN_VERSION);
+ 			exit(0);
+@@ -4544,16 +4551,16 @@
+ 	uid_t caller_uid;
+ 	gid_t caller_gid;
+ 
+-	/* Check RCTL availability early */
++	/* RCTL is optional for sandboxing: warn when racct is disabled; only
++	 * --limit-* usage needs it, and apply_rctl_rule() fails closed there. */
+ 	{
+ 		int racct_enable = 0;
+ 		size_t len = sizeof(racct_enable);
+ 		if (sysctlbyname("kern.racct.enable", &racct_enable,
+ 		    &len, NULL, 0) == -1 || racct_enable == 0)
+-			errx(EX_UNAVAILABLE,
+-			    "RCTL not enabled; "
+-			    "set kern.racct.enable=1 in /boot/loader.conf "
+-			    "and reboot");
++			warnx("RCTL not enabled; resource limits unavailable. "
++			    "Set kern.racct.enable=1 in /boot/loader.conf "
++			    "and reboot to use --limit-* options");
+ 	}
+ 
+ 	if (argc < 2)
+@@ -4955,9 +4962,9 @@
+ 				err(EX_OSERR, "setuid(%d)", target_uid);
+ 		}
+ 
+-		/* chdir to / inside jail */
+-		if (chdir("/") == -1)
+-			err(EX_OSERR, "chdir(/)");
++		/* chdir to the configured working directory (default /) inside jail */
++		if (chdir(cfg.chdir_path ? cfg.chdir_path : "/") == -1)
++			err(EX_OSERR, "chdir(%s)", cfg.chdir_path ? cfg.chdir_path : "/");
+ 
+ 		/* Set safe default umask; always on, no flag. */
+ 		umask(0022);
+--- a/boxrun.1
++++ b/boxrun.1
+@@ -749,6 +749,13 @@
+ Accepts a group name or numeric GID.
+ .It Fl Fl hostname Ar name
+ Set the hostname inside the sandbox.
++.It Fl Fl chdir Ar dir
++Set the working directory inside the sandbox.  By default the
++sandboxed command starts in
++.Pa /
++; this option changes that to
++.Ar dir
++(which must be visible inside the sandbox, e.g. via a bind mount).
+ .El
+ .Ss Other Options
+ .Bl -tag -width indent
