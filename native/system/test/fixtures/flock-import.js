@@ -7,7 +7,7 @@ try {
   if (platform) Object.defineProperty(process, 'platform', { value: platform });
   const { tryLockExclusive } = await import('../../packages/entry/lib/flock.js');
   assert.equal(typeof tryLockExclusive, 'function');
-  if (platform || (process.platform !== 'linux' && process.platform !== 'darwin')) {
+  if (platform || !['linux', 'darwin', 'freebsd'].includes(process.platform)) {
     await assert.rejects(tryLockExclusive(-1), {
       code: 'ERR_FLOCK_UNSUPPORTED_PLATFORM',
       syscall: 'flock',

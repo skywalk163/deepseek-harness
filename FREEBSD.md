@@ -183,6 +183,15 @@ After changing source you must rebuild (the web command only serves the prebuilt
 pnpm run build     # = build:lib (tsc -b + tsdown) + build:web (vite)
 ```
 
+`pnpm run build` also runs `build:native-system`, which on FreeBSD now compiles
+the Node-API `flock` addon into `native/system/packages/freebsd-x64/bin/system.node`
+from the shared `flock.c` source (FreeBSD has `flock(2)`; no Landlock, no
+node-gyp, headers come from `/usr/local/include/node`). The addon is required by
+`@deepseek-ai/node-addon-system/flock`, which the JSONL session store uses to take
+the cross-process write lease on `session.lock`. Before this port the build step
+silently did nothing on FreeBSD and every session write failed; see the
+troubleshooting table. Rebuild it alone with `pnpm run build:native-system`.
+
 ---
 
 ## 8.1 Enable the FreeBSD jail sandbox (recommended)
@@ -435,9 +444,10 @@ git -c core.hooksPath=/tmp/nohooks push <remote> <branch>
 | `bash` / `grep` run in `$HOME` (or the repo root) instead of the project you set in the task | the web fork does not yet wire the task "项目目录" field into `session.header.cwd`; the command cwd falls back to `process.cwd()` (where `dsh web` was launched) | set the project explicitly: launch with `DSH_PROJECT_DIR=/path/to/project`, or in the rc.d service `sysrc dsh_web_projectdir="/path/to/project"`. The `freebsd/dsh-web-run.sh` launcher `cd`s into it. |
 | `tsc -b` fails with `error TS2305: ... has no exported member 'boxrunProfileArgs'` (host build) | stale `boxrun.e2e.ts` test references a removed symbol; `lib/` for `dsh-sandbox-local` is not produced, harness falls back to boxrun | temporarily `mv` the test out, run `pnpm build:lib:host`, restore it. See §8.2. |
 | `EACCES: permission denied, mkdir '/.dsh/...'` at web start (only via rc.d) | rc.d launches with empty `$HOME` (defaults to `/`) | `sysrc dsh_web_env="HOME=/home/skywalk"`; see §8.2. |
+| `flock is not supported on freebsd-x64` — the UI reports a failed turn (`本轮运行失败`) in **every** mode, minimal included | `@deepseek-ai/node-addon-system/flock` declared only Linux/macOS targets, and `native/system/scripts/build.ts` exited silently on FreeBSD, so no addon was ever built; every session write needs that lease | Fixed in this fork: a `freebsd-x64` platform package plus a FreeBSD branch in the build script. Run `git pull && pnpm install && pnpm run build:native-system`, then restart the service (`service dsh_web restart`). |
 
 ---
 
 ## 14. Verified on FreeBSD
 
-`node-pty` compiles natively, `sharp` renders through WASM, `pnpm run build` completes (`tsc -b` + `tsdown` + `vite`), and `dsh web` serves the UI over HTTP on loopback.
+`node-pty` compiles natively, `sharp` renders through WASM, `pnpm run build` completes (`tsc -b` + `tsdown` + `vite`), and `dsh web` serves the UI over HTTP on loopback. The Node-API `flock` addon builds from source with the system `cc`, and the native suite it belongs to passes on FreeBSD — 52/52 (`node --test native/system/test/flock.test.js native/system/test/package-matrix.test.js`), including the independent C-oracle lock cross-checks and the session write lease (`SessionWriteLease`: acquire, mutual exclusion, hand-over after release).

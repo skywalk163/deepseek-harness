@@ -771,12 +771,17 @@ importers:
       '@deepseek-ai/node-addon-system-darwin-x64':
         specifier: workspace:*
         version: link:../darwin-x64
+      '@deepseek-ai/node-addon-system-freebsd-x64':
+        specifier: workspace:*
+        version: link:../freebsd-x64
       '@deepseek-ai/node-addon-system-linux-arm64':
         specifier: workspace:*
         version: link:../linux-arm64
       '@deepseek-ai/node-addon-system-linux-x64':
         specifier: workspace:*
         version: link:../linux-x64
+
+  native/system/packages/freebsd-x64: {}
 
   native/system/packages/linux-arm64: {}
 

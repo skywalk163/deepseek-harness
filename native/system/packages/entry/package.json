@@ -40,6 +40,7 @@
   "optionalDependencies": {
     "@deepseek-ai/node-addon-system-darwin-arm64": "workspace:*",
     "@deepseek-ai/node-addon-system-darwin-x64": "workspace:*",
+    "@deepseek-ai/node-addon-system-freebsd-x64": "workspace:*",
     "@deepseek-ai/node-addon-system-linux-arm64": "workspace:*",
     "@deepseek-ai/node-addon-system-linux-x64": "workspace:*"
   }

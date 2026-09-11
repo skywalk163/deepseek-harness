@@ -12,7 +12,10 @@ let binding: FlockBinding | undefined
 function loadBinding(): FlockBinding {
   if (binding) return binding
   const { platform, arch } = process
-  if (platform !== 'linux' && platform !== 'darwin') {
+  // FreeBSD is a first-class POSIX target of this fork: it ships flock(2) and
+  // builds the same Node-API addon (native/system/scripts/build.ts). It uses
+  // the flat bin/system.node layout, so only Linux selects a libc subdirectory.
+  if (platform !== 'linux' && platform !== 'darwin' && platform !== 'freebsd') {
     throw Object.assign(new Error(`flock is not supported on ${platform}-${arch}`), {
       code: 'ERR_FLOCK_UNSUPPORTED_PLATFORM',
       syscall: 'flock',

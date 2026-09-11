@@ -183,6 +183,14 @@ pnpm install
 pnpm run build     # 等价于 build:lib (tsc -b + tsdown) + build:web (vite)
 ```
 
+`pnpm run build` 还会跑 `build:native-system`：在 FreeBSD 上它现在会用共用的
+`flock.c` 源码，把 Node-API 的 `flock` 插件编译到
+`native/system/packages/freebsd-x64/bin/system.node`（FreeBSD 自带 `flock(2)`；
+不需要 Landlock，也不需要 node-gyp，头文件取自 `/usr/local/include/node`）。
+`@deepseek-ai/node-addon-system/flock` 依赖它来对 `session.lock` 取跨进程写租约，
+JSONL 会话存储必须要它。移植之前这一步在 FreeBSD 上会静默跳过，导致每次写会话都失败；
+详见排错表。只重建它可用 `pnpm run build:native-system`。
+
 ---
 
 ## 8.1 启用 FreeBSD jail 沙箱（推荐）
@@ -435,9 +443,10 @@ git -c core.hooksPath=/tmp/nohooks push <remote> <branch>
 | `bash` / `grep` 落在 `$HOME`（或仓库根）而非任务里设的项目目录 | 本 fork 尚未把任务的"项目目录"字段接进 `session.header.cwd`，命令 cwd 回退到 `process.cwd()`（即 `dsh web` 启动目录） | 显式指定项目：启动加 `DSH_PROJECT_DIR=/项目路径`，或在 rc.d 服务里 `sysrc dsh_web_projectdir="/项目路径"`。`freebsd/dsh-web-run.sh` 启动器会 cd 进去。 |
 | `tsc -b` 报 `error TS2305: ... has no exported member 'boxrunProfileArgs'`（host 构建） | 陈旧的 `boxrun.e2e.ts` 测试引用了已删除的符号，导致 `dsh-sandbox-local` 的 `lib/` 产不出、harness 回退到 boxrun | 临时 `mv` 该测试出目录，跑 `pnpm build:lib:host`，再还原。见 8.2 节。 |
 | web 启动时（仅 rc.d 路径）报 `EACCES: permission denied, mkdir '/.dsh/...'` | rc.d 以空 `$HOME`（默认 `/`）拉起命令 | `sysrc dsh_web_env="HOME=/home/skywalk"`；见 8.2 节。 |
+| 报 `flock is not supported on freebsd-x64`，界面显示"本轮运行失败"，**任何模式**（含极简模式）都会 | `@deepseek-ai/node-addon-system/flock` 只声明了 Linux/macOS 目标，而 `native/system/scripts/build.ts` 在 FreeBSD 上静默退出，插件从未被构建；而每次写会话都要取这个租约 | 本移植已修复：新增 `freebsd-x64` 平台包，并给构建脚本加了 FreeBSD 分支。执行 `git pull && pnpm install && pnpm run build:native-system`，然后重启服务（`service dsh_web restart`）。 |
 
 ---
 
 ## 14. 已验证项
 
-`node-pty` 原生编译通过；`sharp` 经 WASM 渲染；`pnpm run build` 完整跑通（`tsc -b` + `tsdown` + `vite`）；`dsh web` 在环回地址上以 HTTP 提供 UI。
+`node-pty` 原生编译通过；`sharp` 经 WASM 渲染；`pnpm run build` 完整跑通（`tsc -b` + `tsdown` + `vite`）；`dsh web` 在环回地址上以 HTTP 提供 UI。Node-API 的 `flock` 插件用系统 `cc` 从源码编译通过，其所属原生测试套件在 FreeBSD 上 **52/52** 全绿（`node --test native/system/test/flock.test.js native/system/test/package-matrix.test.js`），包含独立的 C oracle 加锁交叉验证与会话写租约（`SessionWriteLease`：获取、互斥、释放后移交）。

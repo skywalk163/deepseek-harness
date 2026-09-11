@@ -52,7 +52,7 @@ export function verifyPlatformBinaries(packageDir) {
   const prebuilds = readJson(path.join(packageDir, 'prebuilds.json'));
   const cpu = manifest.cpu?.[0];
   const os = manifest.os?.[0];
-  if (!(cpu in E_MACHINE) || !['linux', 'darwin'].includes(os)) {
+  if (!(cpu in E_MACHINE) || !['linux', 'darwin', 'freebsd'].includes(os)) {
     throw new Error(`${manifest.name}: unsupported or missing os/cpu metadata`);
   }
   if (prebuilds.platform !== `${os}-${cpu}`) {
@@ -72,8 +72,8 @@ export function verifyPlatformBinaries(packageDir) {
     if (addon && os === 'linux' && !['glibc', 'musl'].includes(binary.libc)) {
       throw new Error(`${manifest.name}: Linux addon must declare glibc or musl`);
     }
-    if (addon && os === 'darwin' && binary.libc !== undefined) {
-      throw new Error(`${manifest.name}: macOS addon must not declare a Linux libc`);
+    if (addon && os !== 'linux' && binary.libc !== undefined) {
+      throw new Error(`${manifest.name}: ${os} addon must not declare a Linux libc`);
     }
 
     const file = path.join(packageDir, binary.path);
@@ -84,7 +84,7 @@ export function verifyPlatformBinaries(packageDir) {
       catch { throw new Error(`${manifest.name}: ${binary.path} is not executable`); }
     }
     const data = fs.readFileSync(file);
-    if (os === 'linux') {
+    if (os === 'linux' || os === 'freebsd') {
       if (data.length < 64 || data.readUInt32LE(0) !== 0x464c457f || data[4] !== 2 || data[5] !== 1) {
         throw new Error(`${manifest.name}: ${binary.path} is not a little-endian ELF64 binary`);
       }

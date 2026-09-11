@@ -12,9 +12,9 @@ import { Worker } from 'node:worker_threads';
 import { tryLockExclusive } from '../packages/entry/lib/flock.js';
 import { loadFlockBinding } from './fixtures/flock-binding.js';
 
-const posix = process.platform === 'linux' || process.platform === 'darwin';
+const posix = process.platform === 'linux' || process.platform === 'darwin' || process.platform === 'freebsd';
 const timeout = 120_000;
-const nativeOnly = { timeout, skip: posix ? false : 'The flock addon requires Linux or macOS' };
+const nativeOnly = { timeout, skip: posix ? false : 'The flock addon requires Linux, macOS, or FreeBSD' };
 
 function resources(t) {
   const disposers = [];
@@ -179,7 +179,9 @@ test('import succeeds with native addons disabled', { timeout }, async (t) => {
   cleanExit(await child.waitForExit());
 });
 
-for (const platform of ['win32', 'freebsd']) {
+// FreeBSD is a supported target in this fork, so the rejected platforms are
+// the ones the POSIX addon genuinely cannot serve.
+for (const platform of ['win32', 'aix']) {
   test(`calling flock on ${platform} rejects without loading an addon`, { timeout }, async (t) => {
     const scope = resources(t);
     const child = await childFixture(t, scope, 'flock-import.js', [platform], { execArgv: ['--no-addons'] });

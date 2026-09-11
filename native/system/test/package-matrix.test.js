@@ -67,7 +67,7 @@ function fixture(t, { platform = 'linux', arch = 'x64', kind = 'node-api' } = {}
   const spec = { platform: `${platform}-${arch}`, binaries: [binary] };
   const manifest = { name: 'fixture', os: [platform], cpu: [arch] };
   const bytes = Buffer.alloc(256);
-  if (platform === 'linux') {
+  if (platform === 'linux' || platform === 'freebsd') {
     bytes.writeUInt32LE(0x464c457f, 0);
     bytes[4] = 2;
     bytes[5] = 1;
@@ -90,7 +90,7 @@ function fixture(t, { platform = 'linux', arch = 'x64', kind = 'node-api' } = {}
   return { dir, file, bytes, binary, spec, manifest, save };
 }
 
-for (const platform of ['linux', 'darwin']) {
+for (const platform of ['linux', 'darwin', 'freebsd']) {
   for (const arch of ['x64', 'arm64']) {
     test(`accepts ${platform}-${arch} addon metadata and header`, (t) => {
       assert.equal(verifyPlatformBinaries(fixture(t, { platform, arch }).dir).count, 1);
@@ -128,6 +128,13 @@ for (const [name, change, expected] of [
 test('rejects Linux libc metadata on macOS', (t) => {
   const f = fixture(t, { platform: 'darwin' });
   f.binary.libc = 'musl';
+  f.save();
+  assert.throws(() => verifyPlatformBinaries(f.dir), /must not declare/);
+});
+
+test('rejects Linux libc metadata on FreeBSD', (t) => {
+  const f = fixture(t, { platform: 'freebsd' });
+  f.binary.libc = 'glibc';
   f.save();
   assert.throws(() => verifyPlatformBinaries(f.dir), /must not declare/);
 });

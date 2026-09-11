@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 
 const root = fileURLToPath(new URL('..', import.meta.url));
-if (process.platform !== 'linux' && process.platform !== 'darwin') {
+if (process.platform !== 'linux' && process.platform !== 'darwin' && process.platform !== 'freebsd') {
   throw new Error('The flock oracle is a POSIX test fixture');
 }
 const variants = process.platform === 'linux' ? ['glibc', 'musl'] : [''];
