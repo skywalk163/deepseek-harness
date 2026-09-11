@@ -7,6 +7,16 @@
 # Surfaces the generated auth token on start/restart so the operator can open
 # the web UI. DeepSeek web now requires a token; without printing it the user
 # cannot open the page.
+#
+# Required in /etc/rc.conf:
+#   dsh_web_enable="YES"
+#   dsh_web_chdir="/path/to/deepseek-harness"
+#   dsh_web_user="<the user that owns the checkout>"
+# Optional:
+#   dsh_web_port="3080"
+#   dsh_web_env="HOME=/home/<user>"   (defaults to the user's passwd home)
+#   dsh_web_projectdir="/path/project" (default cwd for agent commands)
+#   dsh_web_token_wait="180"           (seconds to wait for the token line)
 
 . /etc/rc.subr
 
@@ -21,16 +31,13 @@ load_rc_config $name
 : ${dsh_web_projectdir:=""}
 : ${dsh_web_port:="3080"}
 : ${dsh_web_log:="${dsh_web_chdir}/dsh_web.log"}
+# How long to wait for the auth token to show up in the log. The first start
+# after an install/merge can be slow: pnpm may verify (and re-run) the
+# workspace install before tsx boots the harness, so budget generously.
+: ${dsh_web_token_wait:="180"}
 
 pidfile="${dsh_web_chdir}/dsh_web.pid"
 command="/usr/sbin/daemon"
-# Export the optional project directory so the launcher cds into it (becomes
-# the default working directory for all bash/grep/terminal commands).
-if [ -n "$dsh_web_projectdir" ]; then
-    export DSH_PROJECT_DIR="$dsh_web_projectdir"
-fi
-command_args="-P ${pidfile} -o ${dsh_web_log} /bin/sh ${dsh_web_chdir}/freebsd/dsh-web-run.sh"
-required_dirs="${dsh_web_chdir}"
 
 # Fail fast with a clear message if the repo path is unset.
 if [ -z "$dsh_web_chdir" ]; then
@@ -39,13 +46,43 @@ if [ -z "$dsh_web_chdir" ]; then
     exit 1
 fi
 
+# --- user / HOME -----------------------------------------------------------
+# Do NOT pass `-u ${dsh_web_user}` to daemon(8) here. When dsh_web_user is set,
+# rc.subr *already* drops privileges itself:
+#     limits -C <class> su -m ${dsh_web_user} -c 'sh -c "<command> <command_args>"'
+# Asking daemon(8) to switch users again makes setusercontext(3) fail, because
+# the daemon is no longer root and cannot initgroups(3)/setgid(3). The daemon
+# then dies instantly with:
+#     daemon: failed to set user environment
+# and the service silently never starts.
+#
+# `su -m` preserves the caller's environment, so HOME must be pinned or the
+# child inherits root's HOME. pnpm resolves its version-manager tool dir under
+# $HOME and would otherwise try `/.local/share/pnpm/...`, dying with:
+#     ERROR  EACCES: permission denied, mkdir '/.local/share/pnpm/...'
+# rc.subr injects dsh_web_env into the child, so default it to the user's home.
+: ${dsh_web_home:=""}
+if [ -z "$dsh_web_home" ] && [ -n "$dsh_web_user" ]; then
+    dsh_web_home=$(eval echo "~${dsh_web_user}" 2>/dev/null)
+fi
+: ${dsh_web_env:="HOME=${dsh_web_home}"}
+
+# Export the optional project directory so the launcher cds into it (becomes
+# the default working directory for all bash/grep/terminal commands).
+if [ -n "$dsh_web_projectdir" ]; then
+    export DSH_PROJECT_DIR="$dsh_web_projectdir"
+fi
+
+command_args="-P ${pidfile} -o ${dsh_web_log} /bin/sh ${dsh_web_chdir}/freebsd/dsh-web-run.sh"
+required_dirs="${dsh_web_chdir}"
+
 # Capture the current log length BEFORE launching so we only match the freshly
 # generated token (the log is appended, not truncated, across restarts).
 dsh_web_precmd() {
     dsh_web_log_before=$(wc -l < "${dsh_web_log}" 2>/dev/null || echo 0)
 }
 
-# Stop the daemon AND its dsh node child. daemon -P only records the daemon
+# Stop the daemon AND its dsh node child. daemon -P only records the supervised
 # pid; killing just that leaves the node process orphaned and still holding the
 # port, which would make a subsequent start fail with EADDRINUSE.
 dsh_web_stop() {
@@ -69,7 +106,7 @@ dsh_web_stop() {
 dsh_web_wait_token() {
     local i token start_line
     start_line=$((dsh_web_log_before + 1))
-    for i in $(seq 1 45); do
+    for i in $(seq 1 "${dsh_web_token_wait}"); do
         token=$(tail -n +"$start_line" "${dsh_web_log}" 2>/dev/null | grep -oE "token=[A-Za-z0-9_-]+" | tail -1 | cut -d= -f2-)
         if [ -n "$token" ]; then
             break

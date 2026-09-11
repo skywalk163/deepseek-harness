@@ -21,10 +21,16 @@ fi
 # (this one) install it under /var instead and point here. See FREEBSD.md.
 export DSH_JAIL_RUN_BIN="${DSH_JAIL_RUN_BIN:-/var/dsh-jail-run}"
 
-# Make sure node/pnpm (from /usr/local) and the gmake shim (~/bin/make) are
-# found, whether launched from an interactive shell or at boot via rc.d
-# (where PATH is minimal). Do NOT rely on /tmp/p117-style paths.
-export PATH="$HOME/bin:/usr/local/bin:/usr/local/sbin:$PATH"
+# Make sure node/pnpm and the gmake shim (~/bin/make) are found, whether
+# launched from an interactive shell or at boot via rc.d (where PATH is
+# minimal). Do NOT rely on /tmp/p117-style paths.
+#
+# $HOME/.local/bin comes first on purpose: it holds the persisted pnpm 11.7.0
+# (matching packageManager in package.json). Without it, /usr/local/bin/pnpm
+# is used, which triggers pnpm's "manage-package-manager-versions" bootstrap
+# and re-downloads the same version into $HOME/.local/share/pnpm/.tools on
+# every cold start -- slow, and it hard-fails with EACCES when $HOME is unset.
+export PATH="$HOME/.local/bin:$HOME/bin:/usr/local/bin:/usr/local/sbin:$PATH"
 
 # Resolve repo root: parent of this script's directory.
 SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
