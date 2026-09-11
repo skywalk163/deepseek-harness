@@ -91,12 +91,23 @@ describe('client bundle purity gate', () => {
     expect(() => resolveId('@deepseek-ai/dsh-client-web-react/store')).toThrow(/purity/)
   })
 
-  it('lets inline-safe wire layers inline', () => {
+  it('lets inline-safe libraries inline', () => {
     expect(resolveId('@deepseek-ai/dsh-session/surface')).toBeNull()
     expect(resolveId('@deepseek-ai/dsh-brand')).toBeNull()
+    expect(resolveId('@deepseek-ai/dsh-deque')).toBeNull()
+    expect(resolveId('@deepseek-ai/dsh-util-values')).toBeNull()
     expect(resolveId('@deepseek-ai/dsh-token-meter/client')).toBeNull()
     expect(() => resolveId('@deepseek-ai/dsh-token-meter')).toThrow(/purity/)
     expect(() => resolveId('@deepseek-ai/dsh-token-meter/client/internal')).toThrow(/purity/)
+    expect(resolveId('@deepseek-ai/dsh-host-open-in-app/shared')).toBeNull()
+    expect(() => resolveId('@deepseek-ai/dsh-host-open-in-app')).toThrow(/purity/)
+  })
+
+  it('admits only the pure spill notice entry, not its Host policy', () => {
+    expect(resolveId('@deepseek-ai/dsh-spill-policy/notice')).toBeNull()
+    expect(resolveId('@deepseek-ai/dsh-output-retention')).toBeNull()
+    expect(() => resolveId('@deepseek-ai/dsh-spill-policy')).toThrow(/purity/)
+    expect(() => resolveId('@deepseek-ai/dsh-spill-policy/notice/internal')).toThrow(/purity/)
   })
 
   it('lets exact generated Remote contributions inline without admitting their package implementation', () => {

@@ -24,6 +24,9 @@
       "path": "../../core/session"
     },
     {
+      "path": "../../typert/protocol"
+    },
+    {
       "path": "../../client/connection/tsconfig.client.json"
     },
     {
@@ -34,6 +37,9 @@
     },
     {
       "path": "../../client/ui-conversation"
+    },
+    {
+      "path": "../../client/ui-layout"
     },
     {
       "path": "../../client/ui-slots"
@@ -49,9 +55,6 @@
     },
     {
       "path": "../../subagent/subagent"
-    },
-    {
-      "path": "../../runtime-diagnostics/invariants"
     }
   ]
 }

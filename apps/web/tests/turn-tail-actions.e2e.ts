@@ -23,7 +23,7 @@ import {
 import { connectFreshWorkspace, newEnglishPage, saveFailureShot } from './support.ts'
 
 const SNAPSHOT_DIR = fileURLToPath(new URL('../../../snapshots/web/turn-tail-actions', import.meta.url))
-const FIXTURE = join(SNAPSHOT_DIR, 'session.jsonl')
+const FIXTURE = join(SNAPSHOT_DIR, 'session.v3.jsonl')
 // Three goldens for the same message: parked mid-turn, aborted, and completed.
 const RUNNING_EXPECTED = join(SNAPSHOT_DIR, 'running.expected.md')
 const SETTLED_EXPECTED = join(SNAPSHOT_DIR, 'settled.expected.md')
@@ -64,7 +64,8 @@ describe('web e2e: assistant IconActions wait for the turn to end', () => {
   /** Boot scaffold + page, materializing the sidecar before the replay row installs. */
   async function launch(
     buildOverride?: (sidecarHome: string) => ReplayOverrideDoc,
-    paceMs?: number,
+    // Throughput snapshots require a nonzero interval between replayed chunks.
+    paceMs = 1,
   ): Promise<void> {
     sessionEvents = []
     let overridePath: string | undefined
@@ -80,7 +81,7 @@ describe('web e2e: assistant IconActions wait for the turn to end', () => {
           replayFixture: FIXTURE,
           ...(overridePath === undefined ? {} : { replayOverride: overridePath }),
           compareReplaySession: overridePath === undefined,
-          ...(paceMs === undefined ? {} : { paceMs }),
+          paceMs,
         },
     )
     scaffold.ctx.on('session/event', (_session, event: SessionEvent) => { sessionEvents.push(event) })
@@ -139,6 +140,9 @@ describe('web e2e: assistant IconActions wait for the turn to end', () => {
       () => page.getByRole('status').filter({ hasText: 'Deep diving...' }).isVisible(),
       { timeout: 10_000 },
     ).toBe(true)
+    await page.locator('[data-streaming="true"]')
+      .getByText('partial', { exact: true })
+      .waitFor({ timeout: 10_000 })
     // Only the user bubble owns a footer (clock + copy; user bubbles carry no
     // branch action): the narration is not the answer yet.
     const copyButtons = page.getByRole('button', { name: 'Copy' })
@@ -165,23 +169,42 @@ describe('web e2e: assistant IconActions wait for the turn to end', () => {
   }, 120_000)
 
   it.skipIf(MODE === 'record')('shows exact completed-Turn usage and expands its available facts', async () => {
-    await launch()
+    await launch(undefined, 5)
     onTestFailed(() => saveFailureShot(page, 'web-e2e-turn-usage-expanded'))
     const { settled } = await sendPrompt(120_000)
     await settled
 
-    const disclosure = page.getByRole('button', { name: /Turn usage/ })
-    await expect.poll(() => disclosure.count(), { timeout: 10_000 }).toBe(1)
-    expect(await disclosure.getAttribute('aria-expanded')).toBe('false')
-    expect(await page.getByText('15.8K tok · Cache hit 49.7%', { exact: true }).count()).toBe(1)
+    const trigger = page.getByRole('button', { name: /Usage 15\.8K tok/ })
+    await expect.poll(() => trigger.count(), { timeout: 10_000 }).toBe(1)
+    expect(await trigger.getAttribute('aria-expanded')).toBe('false')
+    // The usage pill carries the icon and the turn total; the time pill beside
+    // it carries the run time, and both keep their details dialog-only.
+    expect(await trigger.textContent()).toBe('Usage 15.8K tok')
+    const timeTrigger = page.getByRole('button', { name: /^Ran for \S+$/ })
+    expect(await timeTrigger.count()).toBe(1)
+    expect(await page.locator('[data-turn-tail]').getByText(/tok\/s|TTFT/).count()).toBe(0)
+    expect(await page.getByRole('dialog').count()).toBe(0)
 
-    await disclosure.click()
-    expect(await disclosure.getAttribute('aria-expanded')).toBe('true')
-    expect(await page.getByText('deepseek-official/deepseek-v4-flash', { exact: true }).count()).toBe(1)
-    expect(await page.getByText('7,891 tok', { exact: true }).count()).toBe(1)
-    expect(await page.getByText('7,808 tok', { exact: true }).count()).toBe(1)
-    expect(await page.getByText('112 tok (42 tok reasoning)', { exact: true }).count()).toBe(1)
-    expect(await page.getByText('15,811 tok', { exact: true }).count()).toBe(1)
+    await trigger.click()
+    expect(await trigger.getAttribute('aria-expanded')).toBe('true')
+    const dialog = page.getByRole('dialog', { name: 'Turn usage' })
+    expect(await dialog.count()).toBe(1)
+    expect(await dialog.getByText('deepseek-official/deepseek-v4-flash', { exact: true }).count()).toBe(1)
+    expect(await dialog.getByText('49.7%', { exact: true }).count()).toBe(1)
+    expect(await dialog.getByText('7,891 tok', { exact: true }).count()).toBe(1)
+    expect(await dialog.getByText('7,808 tok', { exact: true }).count()).toBe(1)
+    expect(await dialog.getByText('112 tok (42 tok reasoning)', { exact: true }).count()).toBe(1)
+    expect(await dialog.getByText('15,811 tok', { exact: true }).count()).toBe(1)
+    await page.keyboard.press('Escape')
+    expect(await page.getByRole('dialog').count()).toBe(0)
+
+    await timeTrigger.click()
+    const timeDialog = page.getByRole('dialog', { name: 'Turn time and speed' })
+    expect(await timeDialog.count()).toBe(1)
+    expect(await timeDialog.getByText(/tok\/s/).count()).toBe(0)
+    expect(await timeDialog.getByText('Time to first token (TTFT)', { exact: true }).count()).toBe(0)
+    await page.keyboard.press('Escape')
+    await trigger.click()
 
     const expanded = await captureStableAria(page, '[class*="centerCol"]', scaffold!.workspaceCwd)
     await compareOrRefreshGolden(USAGE_EXPANDED_EXPECTED, expanded, MODE)
@@ -190,7 +213,7 @@ describe('web e2e: assistant IconActions wait for the turn to end', () => {
   }, 120_000)
 
   it.skipIf(MODE === 'record')('folds the Turn process after the completed reply becomes the answer', async () => {
-    await launch()
+    await launch(undefined, 5)
     onTestFailed(() => saveFailureShot(page, 'web-e2e-turn-tail-actions-completed'))
     const { settled } = await sendPrompt()
     await settled
@@ -269,7 +292,7 @@ describe('web e2e: assistant IconActions wait for the turn to end', () => {
     await assertFixtureInventory(
       SNAPSHOT_DIR,
       [
-        'completed.expected.md', 'focused.expected.md', 'running.expected.md', 'session.jsonl',
+        'completed.expected.md', 'focused.expected.md', 'running.expected.md', 'session.v3.jsonl',
         'settled.expected.md', 'usage-expanded.expected.md',
       ],
     )

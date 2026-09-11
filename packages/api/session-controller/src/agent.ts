@@ -9,11 +9,12 @@ import type {
 import type {} from '@deepseek-ai/dsh-agent-default-model'
 import type {} from '@deepseek-ai/dsh-agent-presets'
 import { ReasoningEffortId } from '@deepseek-ai/dsh-llm'
-import type { Session, SessionEvent, SessionHeader, SessionId } from '@deepseek-ai/dsh-session'
+import type { Session, SessionId } from '@deepseek-ai/dsh-session'
+import type { SessionInspection } from '@deepseek-ai/dsh-session-persistence'
 import { SessionQueryError, type SessionObservation } from '@deepseek-ai/dsh-session-query'
-import { TypertLookupFailure } from '@deepseek-ai/dsh-typert-protocol'
+import { RemoteError } from '@deepseek-ai/dsh-typert-protocol'
 import type {} from '@deepseek-ai/dsh-typert-registry'
-import type { ModelSelection, SessionError } from './types.ts'
+import type { ModelSelection } from './types.ts'
 
 /** Cold Session identity absent from persistence. */
 export class ApiSessionNotFound extends Error {}
@@ -57,10 +58,7 @@ export class ApiSessionPresetConflict extends Error {
 }
 
 /** Failures produced while resolving one ordinary Session identity to its live Agent. */
-export type ApiSessionAgentError = Extract<
-  SessionError,
-  { readonly code: 'session-not-found' | 'agent-busy' | 'internal' }
->
+export type ApiSessionAgentError = RemoteError<'session/not-found' | 'session/agent-busy' | 'gateway/internal'>
 
 /** Result of resolving one ordinary Session identity to its live Agent. */
 export type ApiSessionAgentResult =
@@ -97,11 +95,11 @@ export function hasApiSessionSubagentOwner(
  * @returns a stable Session-domain failure.
  */
 export function apiSessionSubagentOwnershipError(sessionId: SessionId): ApiSessionAgentError {
-  return {
-    code: 'agent-busy',
-    message: `session "${sessionId}" is owned by subagent routing`,
-    details: { reason: 'use subagent delivery for this child session' },
-  }
+  return new RemoteError(
+    'session/agent-busy',
+    `session "${sessionId}" is owned by subagent routing`,
+    { reason: 'use subagent delivery for this child session' },
+  )
 }
 
 /**
@@ -115,7 +113,7 @@ export async function inspectApiSession(
   ctx: Context,
   sessionId: SessionId,
   signal?: AbortSignal,
-): Promise<{ meta: SessionHeader; events: SessionEvent[] }> {
+): Promise<SessionInspection> {
   try {
     using observation = await ctx.sessionQuery.observeSession(sessionId, {
       ...(signal === undefined ? {} : { signal }),
@@ -124,7 +122,11 @@ export async function inspectApiSession(
     if (observation.header.cwd === undefined) {
       throw new ApiSessionNotFound(`session "${sessionId}" not found`)
     }
-    return { meta: observation.header, events: [...observation.events] }
+    return {
+      meta: observation.header,
+      inheritedEventCount: observation.inheritedEventCount,
+      events: [...observation.events],
+    }
   } catch (error: unknown) {
     if (error instanceof SessionQueryError
       && error.code === 'SESSION_QUERY_SESSION_NOT_FOUND') {
@@ -145,17 +147,17 @@ export class ApiSessionAgentController {
   constructor(private readonly ctx: Context) {
     ctx.typert.lookups.configure('agent', async (sessionId: SessionId) => {
       const found = await this.resolveAgent(sessionId)
-      if ('error' in found) throw new TypertLookupFailure(found.error)
+      if ('error' in found) throw found.error
       return found.agent
     })
     ctx.typert.lookups.configure('session', async (sessionId: SessionId) => {
       const found = await this.resolveAgent(sessionId)
-      if ('error' in found) throw new TypertLookupFailure(found.error)
+      if ('error' in found) throw found.error
       return found.agent.session
     })
     ctx.typert.contexts.configureHost('agent', async (sessionId: SessionId) => {
       const found = await this.resolveAgent(sessionId)
-      if ('error' in found) throw new TypertLookupFailure(found.error)
+      if ('error' in found) throw found.error
       return found.agent.ctx
     })
   }
@@ -198,13 +200,7 @@ export class ApiSessionAgentController {
       return { agent: await resume }
     } catch (error: unknown) {
       if (error instanceof ApiSessionNotFound) {
-        return {
-          error: {
-            code: 'session-not-found',
-            message: error.message,
-            details: { sessionId },
-          },
-        }
+        return { error: new RemoteError('session/not-found', error.message, { sessionId }) }
       }
       if (error instanceof ApiSessionSubagentOwnership) {
         return { error: apiSessionSubagentOwnershipError(error.sessionId) }
@@ -216,11 +212,11 @@ export class ApiSessionAgentController {
         return { error: apiSessionSubagentOwnershipError(sessionId) }
       }
       return {
-        error: {
-          code: 'internal',
-          message: `resume failed for session "${sessionId}": ${String(error)}`,
-          details: {},
-        },
+        error: new RemoteError(
+          'gateway/internal',
+          `resume failed for session "${sessionId}": ${String(error)}`,
+          {},
+        ),
       }
     }
   }
@@ -380,12 +376,14 @@ export class ApiSessionAgentController {
     readonly setup: AgentSetup
   }> {
     const presets = this.ctx.get('agentPresets')
-    if (presets === undefined) return { setup: (agentCtx) => { this.installSelection(agentCtx) } }
+    if (presets === undefined) {
+      return { setup: (_agentCtx, agent) => { this.installSelection(agent) } }
+    }
     const resolvedId = (await presets.resolve(presetId)).id
     return {
       agentPreset: resolvedId,
-      setup: async (agentCtx) => {
-        this.installSelection(agentCtx)
+      setup: async (agentCtx, agent) => {
+        this.installSelection(agent)
         await presets.mount(agentCtx, resolvedId)
       },
     }
@@ -494,9 +492,7 @@ export class ApiSessionAgentController {
     return { provider, model }
   }
 
-  private installSelection(agentCtx: Context): void {
-    const agent = agentCtx.agent
-    if (agent === undefined) throw new Error('api-session: Agent setup has no scoped Agent')
+  private installSelection(agent: Agent): void {
     this.selectionFor(agent)
   }
 

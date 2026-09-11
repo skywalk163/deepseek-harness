@@ -2,7 +2,7 @@
 
 import { Context, Service } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
-import { installSettingsSection, settingsNamespace } from '@deepseek-ai/dsh-settings'
+import type {} from '@deepseek-ai/dsh-settings'
 import {
   AllowedModelRouteSchema,
   assertAllowedModelRoutes,
@@ -11,13 +11,13 @@ import {
 
 declare module '@deepseek-ai/cordis' {
   interface Context {
-    /** User preference sampled when a new Agent receives its delegation tools. */
+    /** User preference sampled when a new Session receives delegation tools. */
     subagentModelSelection: SubagentModelSelectionConfig
   }
 }
 
 /** User-settings section for model-selectable subagent delegation. */
-export const SUBAGENT_MODEL_SELECTION_SETTINGS_NAMESPACE = settingsNamespace('subagent-model-selection')
+export const SUBAGENT_MODEL_SELECTION_SETTINGS_NAMESPACE = 'subagent-model-selection'
 
 /** Stored user preference; the shipped composition defaults it off. */
 export interface SubagentModelSelectionSettings {
@@ -41,7 +41,7 @@ export interface Config {
   allowedModels?: AllowedModelRoute[]
 }
 
-/** Singleton settings owner read by delegation tools when an Agent is published. */
+/** Singleton settings owner read when delegation tools are composed for a Session. */
 export class SubagentModelSelectionConfig extends Service {
   static Config: z<Config> = z.object({
     enabled: z.boolean().default(false),
@@ -60,23 +60,25 @@ export class SubagentModelSelectionConfig extends Service {
     }
     this.validate(entry)
     this.source = () => entry
-    installSettingsSection(
-      ctx,
-      SUBAGENT_MODEL_SELECTION_SETTINGS_NAMESPACE,
-      SUBAGENT_MODEL_SELECTION_SETTINGS_SCHEMA,
-      entry,
-      {
-        setSource: (source) => { this.source = source },
-        validate: (value) => { this.validate(value) },
-        // Consumers sample at Agent publication, so a settings update never
-        // rebuilds the tool definitions of an Agent that is already running.
-        onChange: () => {},
-      },
-    )
+    ctx.inject(['settings'], (settingsCtx) => {
+      settingsCtx.settings.installSection(
+        ctx,
+        SUBAGENT_MODEL_SELECTION_SETTINGS_NAMESPACE,
+        SUBAGENT_MODEL_SELECTION_SETTINGS_SCHEMA,
+        entry,
+        {
+          setSource: (source) => { this.source = source },
+          validate: (value) => { this.validate(value) },
+          // Consumers snapshot per Session, so a settings update never rebuilds
+          // the tool definitions of a Session that is already running.
+          onChange: () => {},
+        },
+      )
+    })
   }
 
   /**
-   * Read a detached selection preference for the next eligible Agent publication.
+   * Read a detached selection preference for the next eligible Session composition.
    * @returns the enabled state and exact allowed routes.
    */
   current(): SubagentModelSelectionSettings {

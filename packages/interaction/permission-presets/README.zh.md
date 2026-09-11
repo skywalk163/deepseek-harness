@@ -9,7 +9,7 @@ kind: "package-reference"
 
 ## 概述
 
-`dsh-permission-presets` 为部署提供一个面向用户的 Permissions 选择器，把两个独立的执行旋钮——沙箱模式与审批策略——捆绑为具名预设。选择预设会同时应用沙箱模式与审批策略，而每个旋钮各自保留自己的值，因此沙箱执行、审批、提示词叙述与回放都读取各自的设置。默认表提供 `workspace-write`（workspace-write ＋ ask）与 `danger-full-access`（danger-full-access ＋ never）；不匹配任何预设的旋钮组合会读回推导出的 `custom`，客户端可以显示它，但不能选择它。该服务还拥有 `permission` 设置命名空间，其默认值只在之后创建会话时生效；两个可选子功能——`permissions` 会话投影单元与 `/permission` 命令——向 Web 客户端暴露同一表面。挂载它需要具有约束能力的 bash 执行器与审批服务；它自身不拥有任何执行权。
+权限预设让用户通过一个选择器同时应用沙箱模式和审批策略。部署可以配置具名预设以及新建会话的默认预设；更改该默认值不会影响现有会话，内置预设表包含 `workspace-write` 和 `danger-full-access`。如果当前组合不匹配任何预设，客户端会显示推导出的 `custom` 状态，但用户不能选择或持久化它；切换预设只会更改实际值不同的设置。`/permission` 命令用于报告或更改当前预设，而沙箱执行和审批处理仍由不同的执行机制负责。
 
 ## 目录
 
@@ -87,15 +87,15 @@ kind: "package-reference"
 
 ### 读取侧与 `custom`
 
-`current(events)` 在组合默认值（`ctx.shell.sandboxMode` 与审批配置）之上折叠三个全量值旋钮事件。仍匹配的最近选择在共享捆绑时胜出；否则表中第一个匹配项胜出；否则返回推导出的 `CUSTOM_PRESET`。`permissions` 投影单元逐事件应用同一折叠，并向客户端提供选择器。
+`current(session)` 读取 `permissions` 投影；该单元在组合默认值（`ctx.shell.sandboxMode` 与审批配置）之上折叠三个全量值旋钮事件。host 状态还会保留 `session/end-seed` 是否已经出现，使会话固定无需重扫日志即可区分显式为空的恢复 seed 与真正的新会话。仍匹配的最近选择在共享捆绑时胜出；否则表中第一个匹配项胜出；否则返回推导出的 `CUSTOM_PRESET`。注册表或投影 key 缺失时会显式失败。
 
 ### 会话固定与空白复用
 
-挂载时会固定所有存活与未来的会话：真正全新的会话获得默认预设与两个旋钮事实，而 seed 会话或部分初始化的会话保留其有效旋钮值，只补充缺失的持久事实。
+挂载时会固定所有存活与未来的会话：真正全新的会话获得默认预设与两个旋钮事实，而 seed 会话或部分初始化的会话保留其有效旋钮值，只补充缺失的持久事实。投影自有的 seed 标记让该判断与旋钮值共用同一份增量状态。
 
 ### 可选子功能
 
-`permissions` 投影单元仅在组合了 `ctx.sessionProjections` 注册表时注册；`/permission` 命令仅在组合了 `ctx.commands` 注册表时注册。两者都未组合的无头装配不受影响。
+`permissions` 投影单元仅在组合了 `ctx.sessionProjections` 注册表时注册；`/permission` 命令仅在组合了 `ctx.commands` 注册表时注册。派生当前预设或固定初始选择的调用要求该投影存在，缺少注册表或 key 时会显式失败。
 
 </details>
 

@@ -40,15 +40,29 @@ export interface TypertContextMap {}
 export interface TypertRemoteMap {}
 
 /**
- * One Remote call's failure as the carrier reported it. `code` stays open here:
- * the closed RPC code union belongs to the carrier package, which already
- * depends on this one, so naming it would invert that edge.
+ * Merge-extensible Remote failure vocabulary: this package declares the
+ * universal carrier codes once; the Gateway merges its infrastructure codes
+ * and every owner merges its domain codes next to the throwing code.
  */
-export interface RemoteFailure {
-  readonly code: string
-  readonly message: string
-  readonly details: object
+export interface RemoteErrorDetailsMap {
+  /** Owner-side business validation refused the request; `issues` carries codec output when one produced it. */
+  'gateway/bad-request': { readonly issues?: readonly object[] }
+  /** The call was cancelled by the carrier signal or the backend. */
+  'gateway/cancelled': {}
+  /** Carrier, dispatch, or unclassified Host failure. */
+  'gateway/internal': {}
 }
+
+/** Every declared Remote failure code. */
+export type RemoteErrorCode = keyof RemoteErrorDetailsMap
+
+/**
+ * One Remote call's failure: the code-discriminated union of RemoteError
+ * instances, so a `code` branch narrows `details` with no cast.
+ */
+export type RemoteFailure = {
+  [Code in RemoteErrorCode]: import('./remote-error.ts').RemoteError<Code>
+}[RemoteErrorCode]
 
 /**
  * What every generated Remote method resolves to. The Remote face itself folds
@@ -350,29 +364,18 @@ export interface TypertLookupDefinition {
   readonly wireTypeSymbol: string
 }
 
-/** Bidirectional projection between one environment's Context and its wire identity. */
-export interface TypertContextAdapter<Wire = unknown> {
-  /**
-   * Read the identity represented by a live Context.
-   * @param ctx - Context in this adapter's environment.
-   * @returns the wire identity, or `undefined` when the Context has another kind.
-   */
-  identity(ctx: Context): Wire | undefined
-  /**
-   * Resolve a wire identity to a live Context in this adapter's environment.
-   * An asynchronous Client resolver may wait for its owner to create the Context.
-   * @param id - validated wire identity.
-   * @returns the Context, or `undefined` when it is unavailable.
-   */
-  resolve(id: Wire): Context | undefined | Promise<Context | undefined>
-}
-
-/** Host Context adapter plus the wire declaration used by strict Remote methods. */
-export interface TypertHostContextAdapter<Wire = unknown> extends TypertContextAdapter<Wire> {
+/** Host wire-to-Context resolver plus the declaration used by strict Remote methods. */
+export interface TypertHostContextAdapter<Wire = unknown> {
   /** Wire field carrying the Context identity. */
   readonly wire: string
   /** Canonical wire type symbol used by strict generation. */
   readonly wireTypeSymbol: string
+  /**
+   * Resolve a validated wire identity to a live Host Context.
+   * @param id - validated wire identity.
+   * @returns the Context, or `undefined` when it is unavailable.
+   */
+  resolve(id: Wire): Context | undefined | Promise<Context | undefined>
 }
 
 /** Composition-owned resolver replacing one Host Context adapter's default lookup policy. */
@@ -394,14 +397,6 @@ export interface TypertClientContextAdapter<Wire = unknown> {
    * @returns the Client Context, or `undefined` when unavailable.
    */
   resolve(id: Wire): Context | undefined
-}
-
-/** Host Context identity selected from the registered adapter set. */
-export interface TypertHostContextIdentity {
-  /** Merge-declared Context kind whose adapter recognized the Context. */
-  readonly kind: string
-  /** Wire identity returned by that adapter. */
-  readonly identity: unknown
 }
 
 /** Notification emitted after a Typert runtime registry changes. */
@@ -513,7 +508,7 @@ export interface TypertContextRegistry {
   /**
    * Register a Host Context adapter.
    * @param key - merge-declared Context key.
-   * @param adapter - owning package's bidirectional Host projection.
+   * @param adapter - owning package's Host resolver and wire declaration.
    * @returns disposer withdrawing the exact adapter.
    */
   registerHost<K extends StringKeyOf<TypertContextMap>>(
@@ -541,13 +536,6 @@ export interface TypertContextRegistry {
     key: K,
     adapter: TypertClientContextAdapter<TypertContextWire<TypertContextMap[K]>>,
   ): TypertDisposer
-  /**
-   * Identify a live Host Context through the sole registered adapter set.
-   * @param ctx - Context projected by a Host-to-Client scoped event.
-   * @returns its kind and wire identity, or `undefined` when no adapter recognizes it.
-   * @throws when more than one Context kind recognizes the same Context.
-   */
-  identifyHost(ctx: Context): TypertHostContextIdentity | undefined
   /**
    * Look up a Host Context adapter.
    * @param key - descriptor Context key.

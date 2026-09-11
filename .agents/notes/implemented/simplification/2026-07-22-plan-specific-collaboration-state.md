@@ -14,7 +14,7 @@ Plan mode also needs a durable stance, a reviewable plan artifact, an explicit h
 
 ## Decision
 
-Plan mode owns a plan-specific product package: `@deepseek-ai/dsh-plan-mode` at `packages/plan/plan-mode/`. The durable fact is `plan/mode: { active: boolean }`, folded by `foldPlanMode(events)` with `false` as the empty-log value. `ctx.planMode.get(agent)` returns `{ active, pending? }`, and `set(agent, active)` records the boundary-applied selection. The pre-step, retry, append-failure, and disposal fences preserve the same state-transition ownership.
+Plan mode owns a plan-specific product package: `@deepseek-ai/dsh-plan-mode` at `packages/plan/plan-mode/`. The durable fact is `plan/mode: { active: boolean }`, folded by the package's `plan` projection unit — `planProjectionDefinition.apply` over committed events, with the empty log folding to inactive (`active: false`) — and every projection unit is now persisted uniformly, the `persist` option having been removed. Host logic reads the fold through `ctx.sessionProjections.stateOf(session, 'plan')`; the client view is `{ active, pending }`. `ctx.planMode.get(agent)` returns `{ active, pending? }`, and `set(agent, active)` records the boundary-applied selection. The pre-step, retry, append-failure, and disposal fences preserve the same state-transition ownership.
 
 Configuration is exactly `{ section: string }`. The package registers the fixed `plan:policy` section, `/plan [message]`, the exact `/plan off` direct-exit form, and `exit_plan_mode` itself. Bare `/plan` selects active; another non-empty argument selects it first and then sends the trimmed text through `agent.steer()`, making the text an ordinary logged user message in the affected step. `/plan off` selects inactive without model input and can cancel an entry that is still pending at the boundary. The exit tool remains registered while plan mode is inactive so the request tool catalog stays stable.
 
@@ -66,6 +66,6 @@ The tool renders the submitted plan as a generic card titled by its first headin
 
 ## Consequences
 
-The implementation has one vocabulary for one shipped feature. Adding another collaboration stance is an explicit design decision instead of a config entry, and automation clients do not acquire human mode controls through ACP. The migration intentionally rejects old `mode/set` logs and old `modes.plan.section` configuration under the repository's pre-release format policy.
+The implementation has one vocabulary for one shipped feature. Adding another collaboration stance is an explicit design decision instead of a config entry, and automation clients do not acquire human mode controls through ACP. The frozen v0-to-v1 Session edge explicitly refuses old `mode/set` events; configuration parsing independently refuses the retired `modes.plan.section` form.
 
 Plan state remains reconstructable and tool schemas remain stable, but an idle pending selection is lost if the process exits before the next boundary. Entering or leaving plan mode changes the prompt from first-party order 500 onward, and a model that ignores the guidance can still mutate unless the deployment independently configures sandbox, approval, or filesystem policy.

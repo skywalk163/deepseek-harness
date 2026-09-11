@@ -9,7 +9,7 @@ kind: "package-library"
 
 ## 概述
 
-`dsh-loader-smoke` 在隔离的临时目录中通过 Cordis Loader 运行真实的应用可执行文件及其 `cordis.yml`，捕获 stdout 与 stderr，使冒烟测试检验真实的组合路径——插件加载、服务接线与 agent loop（智能体循环）——而非手工搭建的测试上下文。`runFixtureTurn` 让一项任务通过组合中的唯一根 agent（智能体），并返回最终 assistant 文本与累计 token 用量。本包还为包内子进程 harness 提供共享的模式感知启动解析器（`src` 模式经 tsx，零构建开发路径；`lib` 模式经普通 Node 运行已构建产物，供 CI 使用）。它是支持层测试基础设施，而非产品 API。
+使用 `dsh-loader-smoke` 可从应用 fixture 的真实可执行文件及其 `cordis.yml` 启动应用，并在隔离的临时目录中捕获输出和完成清理。`runFixtureTurn` 让一项任务通过已配置的根 agent（智能体），并返回最终 assistant 文本与 token 用量。测试可以选择零构建的源码执行或已构建包执行，使本地和 CI 冒烟测试分别采用对应环境预期的消费路径。这个支持层库面向测试作者，不用于产品集成。
 
 ## 目录
 
@@ -42,6 +42,10 @@ const result = await runLoaderSmoke({
 ```
 
 当场景固定一个设计好的失败面——例如一次性轮次以错误结果结束——时设置 `expectedExitCode`；以任何其他方式退出（包括成功退出）都会使冒烟测试失败。
+
+### 测试交付 profile
+
+Profile 集成 driver 使用仅限仓库内部的 `tests/fixtures/production-profile.ts` helper。它通过 `loadProfile` 加载指定的已交付 profile 及其组合包 patch，修复 profile 的模块回退，然后把组合包 patch 与测试 `*.patch.yml` 文件依次交给 `boot` 挂载的根 `cordis:include`。这些 patch 应只包含测试提供方或模型、隔离持久化路径及被测对象专用变更。只需要 agent loop 而不测试 profile 集成的包级单元测试改为在本地挂载 `dsh-agent-loop-testkit`。
 
 ### 驱动 fixture 轮次
 
@@ -77,7 +81,8 @@ harness 建立在一个分离之上：冒烟测试在隔离世界中的子进程
 |---|---|
 | [`src/index.ts`](src/index.ts) | 模式解析器、`runLoaderSmoke` 子进程 harness、选项与结果类型 |
 | [`src/agent-turn.ts`](src/agent-turn.ts) | `runFixtureTurn` 直接 agent driver 与结果信封 |
-| [`src/invariant.ts`](src/invariant.ts) | 不变式伴生插件（无运行时不变式；消费它的测试套件会检验该 harness） |
+| — | 不发布运行时不变量伴生入口；消费它的测试套件会检验该 harness。 |
+| [`tests/fixtures/production-profile.ts`](tests/fixtures/production-profile.ts) | 仅限仓库内部、供集成 fixture 使用的交付 profile 组装 helper |
 
 </details>
 

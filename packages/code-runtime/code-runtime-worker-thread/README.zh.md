@@ -9,7 +9,7 @@ kind: "package-reference"
 
 ## 概述
 
-`dsh-code-runtime-worker-thread` 为 [`dsh-code-runtime`](../code-runtime/README.zh.md) seam 执行 TypeScript 程序：每个程序都在一个全新的 Node Worker 线程中运行，宿主提供的绑定可作为普通异步函数调用，运行返回 `{ value, logs, error? }`。它是 `dsh-tools` 中 PTC mode 的已发布后端，因此挂载它正是让模型编写的 TypeScript 执行在组合中生效的方式。运行时「包含」程序，但不隔离它：信任立场与 bash 等价，并带有空环境、堆上限、实测忙碌时间与墙钟预算，以及强制终止。程序每次请求只运行一次，运行之间不保留状态；每个失败——语法错误、预算到期、中止、OOM 退出或输出溢出——都以结果字段返回。
+本包让 PTC 组合能够使用宿主提供的绑定执行模型编写的 TypeScript，并取得完成值、顺序日志或结构化失败。每次请求都不继承先前运行的状态；语法错误、预算到期、中止、内存耗尽和输出溢出等失败会作为结果返回，而不是抛出。应将执行的代码视为与 bash 拥有同等权限：本包限制环境暴露和资源使用，但不将代码与宿主隔离。可配置的计算时间、墙钟时间、堆和输出上限会终止运行并限制其结果大小。
 
 ## 目录
 
@@ -100,7 +100,7 @@ kind: "package-reference"
 | [`src/protocol.ts`](src/protocol.ts) | host 与 worker 之间的端口消息词汇 |
 | [`src/worker-json.ts`](src/worker-json.ts) | worker 侧无损 JSON 编解码 |
 | [`src/output-json.ts`](src/output-json.ts) | 外层账本的字节计量与截断 |
-| [`src/invariant.ts`](src/invariant.ts) | 不变式伴生插件（无运行时不变式；理由见其说明） |
+| — | 不发布运行时不变式伴生入口；本进程边界实现不暴露可在同一进程内对照的事件关系，worker 协议测试与构建后 worker 测试负责覆盖。 |
 
 ### 未构建与已构建的 worker 入口
 

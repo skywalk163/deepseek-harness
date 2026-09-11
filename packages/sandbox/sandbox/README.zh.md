@@ -9,7 +9,7 @@ kind: "package-reference"
 
 ## 概述
 
-`dsh-sandbox` 将同世界子进程限制在文件效果策略之下：命令以 `read-only` 运行、只能写入会话工作区（`workspace-write`）或不受限制地运行（`danger-full-access`），每次受限执行都遵循一份逐调用策略。bash 与 pwsh 执行器直接消费它，因此命令及其派生的所有进程都在限制下运行，消费方无需知道背后是哪个平台 runner。无法强制执行所请求的模式时，调用以 `SANDBOX_UNAVAILABLE` 错误快速失败，绝不会不受限制地运行。被拒绝的调用可以请求一个由人类批准一次、严格更宽的模式。隔离仅限同世界——后端与宿主共享内核和文件系统，容器、microVM 与远程执行器会替换整个能力。
+使用 `dsh-sandbox`，可以让子进程及其派生的所有进程在逐调用文件访问策略下运行。命令可以禁止写入（`read-only`）、只写入工作区（`workspace-write`），或不受限制地运行（`danger-full-access`）。无法强制执行所请求的模式时，调用以 `SANDBOX_UNAVAILABLE` 失败，绝不会不受限制地运行。调用被拒绝后，模型可以请求一个严格更宽的模式，交由人类批准一次。这是同世界隔离：进程仍与宿主共享内核和文件系统；需要隔离整个环境时，请使用容器、microVM 或远程执行器。
 
 ## 目录
 
@@ -93,7 +93,7 @@ kind: "package-reference"
 | [`src/index.ts`](src/index.ts) | 插件入口：`SandboxProvider` 服务、模式/强制执行/策略类型、故障关闭错误 |
 | [`src/escalation.ts`](src/escalation.ts) | 升权词汇：更宽模式阶梯、参数校验、拒绝与提示标记、审批编排 |
 | [`src/roots.ts`](src/roots.ts) | 可写根目录推导，Seatbelt profile 与进程内 fs 栅栏共享 |
-| [`src/invariant.ts`](src/invariant.ts) | 不变式伴生插件（无运行时不变式；抽象 seam 不注册事件或数据关系） |
+| — | 不发布运行时不变式伴生入口；抽象 seam 不注册事件或数据关系。 |
 
 ### 升权编排
 

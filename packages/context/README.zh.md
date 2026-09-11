@@ -9,7 +9,7 @@ kind: "package-group"
 
 ## 概述
 
-context 组提供不定义任何工具、为每次请求添加模型可见上下文的插件：工作区指令文件成为指引，`@file` mention 提供路径补全，其他会话可以作为有界快照被引用，模型还能看到当前时间与 agent 的 tmux 位置。除 `agent-instructions`（随默认 `dsh-agent-spine-demo` 组合包发布并默认启用，可通过组合包配置禁用）外，其余全部需主动启用。上下文是持久的：注入的指令与引用以 user 角色消息进入会话历史，因此与其他对话内容一样持久、可回放、可压缩。本页是组的映射；包级约定由各包 README 负责。
+context 组提供不定义任何工具、为每次请求添加模型可见上下文的插件：工作区指令文件成为指引，`@file` mention 提供路径补全，其他会话可以作为有界快照被引用，模型还能看到当前时间与 agent 的 tmux 位置。除 `agent-instructions`（`dsh-base` 默认包含它，profile patch 可以禁用）外，其余全部需主动启用。上下文是持久的：注入的指令与引用以 user 角色消息进入会话历史，因此与其他对话内容一样持久、可回放、可压缩。本页是组的映射；包级约定由各包 README 负责。
 
 ## 目录
 
@@ -37,7 +37,7 @@ context 组提供不定义任何工具、为每次请求添加模型可见上下
 ## 相关文档
 
 - [会话引用子系统](../../docs/subsystems/session-reference.zh.md)——规范 mention URI、快照语义与稳定的错误分类。
-- [工作区上下文决策记录](../../.agents/notes/implemented/feature/2026-06-24-workspace-context.zh.md)——指令上下文为何按 agent／会话隔离并持久记录。
+- [工作区上下文决策记录](../../.agents/notes/archived/feature/2026-06-24-workspace-context.md)——指令上下文为何按 agent／会话隔离并持久记录。
 - [生成的配置目录](../../docs/config-catalog.zh.md)——本组各包接受的全部配置字段。
 
 -----

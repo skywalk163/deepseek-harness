@@ -55,8 +55,7 @@ export interface PromptSection {
   readonly name: string
   /**
    * Sections are concatenated in ascending order. Equal orders use code-unit
-   * name order. Repository-owned placements use
-   * {@link FIRST_PARTY_SECTION_ORDER}.
+   * name order.
    */
   readonly order: number
   /**
@@ -119,19 +118,9 @@ export interface PromptAssembly {
   variables: Record<string, string | undefined>
 }
 
-/**
- * Sparse integer placements for repository-owned prompt sections.
- *
- * Adjacent values differ by at least ten to keep the first-party groups sparse
- * and make accidental collisions mechanically detectable.
- * External plugins may use any finite order; equal orders are deterministic by
- * section name.
- */
-export const FIRST_PARTY_SECTION_ORDER = {
+const SECTION_ORDERS = {
   HARNESS_IDENTITY: -1000,
-  HARNESS_SOURCE: -900,
-  WEB_SURFACE: -800,
-  DEPLOYMENT_PERSONA: 0,
+  DEPLOYMENT_PERSONA_PREFIX: 0,
   PLAN_POLICY: 500,
   TEAM_POLICY: 600,
   PTC_ONLY: 800,
@@ -158,18 +147,34 @@ export const FIRST_PARTY_SECTION_ORDER = {
   TOOLS_SDK: 5000,
   DELIVERABLE_FILE_REFERENCES: 9000,
   STRUCTURED_OUTPUT: 9900,
+  // Local paths and endpoints follow reusable instructions.
+  HARNESS_SOURCE: 10000,
+  WEB_SURFACE: 10100,
+  DEPLOYMENT_PERSONA_SUFFIX: 10200,
 } as const
 
+/** Name of a centrally allocated prompt-section position. */
+export type PromptSectionOrderName = keyof typeof SECTION_ORDERS
+
+const CONTEXT_ORDERS = {
+  SANDBOX_POLICY: 110,
+  APPROVAL_POLICY: 115,
+  SUBAGENT_DELEGATION: 120,
+} as const
+
+/** Name of a centrally allocated runtime-context position. */
+export type PromptContextOrderName = keyof typeof CONTEXT_ORDERS
+
 /**
- * The deployment persona's section name and order. Exported because a
+ * The deployment persona prefix's section name. Exported because a
  * composition can replace this slot — an agent preset shadows the
  * deployment's persona with its own — and both sides naming the same section
  * is what makes the replacement work rather than duplicate.
  */
-export const PERSONA_SECTION = 'deployment:persona'
+export const PERSONA_PREFIX_SECTION = 'deployment:persona-prefix'
 
-/** Prompt order of the persona slot. */
-export const PERSONA_ORDER = FIRST_PARTY_SECTION_ORDER.DEPLOYMENT_PERSONA
+/** Deployment persona suffix section name shared by global and scoped contributions. */
+export const PERSONA_SUFFIX_SECTION = 'deployment:persona-suffix'
 
 /** Valid variable names: how they are written between the braces. */
 const VARIABLE_NAME = /^[a-z][a-z0-9_]*$/
@@ -233,17 +238,22 @@ function compareToolNames(a: ToolSchema, b: ToolSchema): number {
   return compareNames(a.name, b.name)
 }
 
-/** Plugin config: the deployment-authored fragment of the system prompt (see {@link Config.persona} for its contract). */
+/** Plugin config: the deployment-authored fragment of the system prompt (see {@link Config.personaPrefix} for its contract). */
 export interface Config {
   /** Include the fixed DeepSeek Harness identity before the deployment persona (default true). */
   includeHarnessIdentity?: boolean
   /** Include dynamic runtime-context snapshots in model history (default true). */
   includeRuntimeContext?: boolean
   /**
-   * Deployment-wide order-0 persona template. A scoped section named
-   * `deployment:persona` shadows it; `{{variable}}` references are strict.
+   * Deployment-wide persona prefix template before first-party guidance. A scoped section named
+   * `deployment:persona-prefix` shadows it; `{{variable}}` references are strict.
    */
-  persona?: string
+  personaPrefix?: string
+  /**
+   * Persona suffix template after first-party guidance. A scoped `deployment:persona-suffix`
+   * section shadows it; `{{variable}}` references are strict. Defaults to empty.
+   */
+  personaSuffix?: string
   /**
    * Model-facing tool names in order, with {@link TOOL_ORDER_REST} exactly once.
    * Invalid fields fail at load and unknown names fail at assembly; known names
@@ -390,7 +400,8 @@ export class SystemPrompt extends Service {
   static Config: z<Config> = z.object({
     includeHarnessIdentity: z.boolean().default(true),
     includeRuntimeContext: z.boolean().default(true),
-    persona: z.string().default(''),
+    personaPrefix: z.string().default(''),
+    personaSuffix: z.string().default(''),
     // Preserve omission because an explicit empty order lacks the rest marker.
     toolOrder: z.array(z.string()).default(undefined as unknown as string[]),
   })
@@ -408,15 +419,20 @@ export class SystemPrompt extends Service {
     if (config.includeHarnessIdentity ?? true) {
       this.section({
         name: 'harness:identity',
-        order: FIRST_PARTY_SECTION_ORDER.HARNESS_IDENTITY,
+        order: this.getSectionOrder('HARNESS_IDENTITY'),
         text: 'You are an AI agent powered by DeepSeek Harness.',
       })
     }
     this.section({
-      name: PERSONA_SECTION,
-      order: PERSONA_ORDER,
+      name: PERSONA_PREFIX_SECTION,
+      order: this.getSectionOrder('DEPLOYMENT_PERSONA_PREFIX'),
       // The fallback narrows the optional input type; the schema already defaults it.
-      text: config.persona ?? '',
+      text: config.personaPrefix ?? '',
+    })
+    this.section({
+      name: PERSONA_SUFFIX_SECTION,
+      order: this.getSectionOrder('DEPLOYMENT_PERSONA_SUFFIX'),
+      text: config.personaSuffix ?? '',
     })
     if (!(config.includeRuntimeContext ?? true)) this.suppressRuntimeContext()
   }
@@ -438,6 +454,24 @@ export class SystemPrompt extends Service {
       layer => layer.sections.insert(section.name, section),
       { label: 'systemPrompt.section()' },
     )
+  }
+
+  /**
+   * Resolve the centrally owned placement of a repository prompt section.
+   * @param name - stable section placement name.
+   * @returns the section's numeric sort order.
+   */
+  getSectionOrder(name: PromptSectionOrderName): number {
+    return SECTION_ORDERS[name]
+  }
+
+  /**
+   * Resolve the centrally owned placement of a repository runtime context.
+   * @param name - stable context placement name.
+   * @returns the context's numeric sort order.
+   */
+  getContextOrder(name: PromptContextOrderName): number {
+    return CONTEXT_ORDERS[name]
   }
 
   /**

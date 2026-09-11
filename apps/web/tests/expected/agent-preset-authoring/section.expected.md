@@ -33,7 +33,7 @@
         - text: 复制
     - listitem:
       - 'button "设为默认: PTC 模式"':
-        - text: PTC 模式 内置 具备标准模式的全部能力，并通过 PTC 模式 SDK 呈现工具，让模型用一个 TypeScript 程序组合多步操作。
+        - text: PTC 模式 内置 功能完整的编码 Agent，但默认不提供 workflow 工具；其他工具通过 PTC 模式 SDK 呈现，让模型用一个 TypeScript 程序组合多步操作。
         - code: ptc
       - 'button "查看: PTC 模式"':
         - img
@@ -43,7 +43,7 @@
         - text: 复制
     - listitem:
       - 'button "设为默认: 极简模式"':
-        - text: 极简模式 内置 仅提供持久 bash 与 str_replace_editor 的双工具编码 Agent。
+        - text: 极简模式 内置 仅提供持久 shell 的单工具编码 Agent。
         - code: minimal
       - 'button "查看: 极简模式"':
         - img

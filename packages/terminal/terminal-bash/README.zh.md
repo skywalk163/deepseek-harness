@@ -120,7 +120,7 @@ shell 在整个生命周期内运行在有效的沙箱边界之下。当所有�
 - [tool-terminal 工具](../tool-terminal/README.zh.md)——操作会话的面向模型工具。
 - [子进程 seam](../../../docs/subsystems/subprocess.zh.md)——负责 PTY 分配与进程树清理的终端原语。
 - [持久 PTY Agent Note](../../../.agents/notes/implemented/feature/2026-07-16-persistent-pty-sessions.zh.md)——能力设计与暂缓边界。
-- [持久 pwsh Agent Note](../../../.agents/notes/implemented/architecture/2026-08-11-pwsh-persistent-pty.zh.md)——Windows 基底与 pwsh 方言。
+- [持久 pwsh Agent Note](../../../.agents/notes/archived/architecture/2026-08-11-pwsh-persistent-pty.md)——Windows 基底与 pwsh 方言。
 
 -----
 
@@ -177,3 +177,5 @@ shell 在整个生命周期内运行在有效的沙箱边界之下。当所有�
 无。
 
 </details>
+
+**运行时不变式：** 不发布伴生入口。readiness、terminal buffer 与 process-tree state 都是按 Session 的私有实现状态，backend 不发布独立 lifecycle stream 或 snapshot。

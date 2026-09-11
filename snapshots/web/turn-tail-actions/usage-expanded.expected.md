@@ -3,8 +3,9 @@
     - button "Begin your reply with the" [disabled]
   - img
   - text: Standard mode
-  - button "Session log":
-    - text: Session log
+  - button "More actions":
+    - img
+  - button "Open right sidebar":
     - img
   - tablist:
     - tab "Chat" [selected]
@@ -20,19 +21,6 @@
   - text: 1 tool call · 1 message
   - img
 - paragraph: DONE
-- button "Turn usage 15.8K tok · Cache hit 49.7%" [expanded]:
-  - img
-  - text: Turn usage 15.8K tok · Cache hit 49.7%
-- term: Provider / model
-- definition: deepseek-official/deepseek-v4-flash
-- term: Uncached input
-- definition: 7,891 tok
-- term: Cached input
-- definition: 7,808 tok
-- term: Output
-- definition: 112 tok (42 tok reasoning)
-- term: Total
-- definition: 15,811 tok
 - button "Copy":
   - img
 - button "Good response":
@@ -41,9 +29,17 @@
   - img
 - button "Branch into a new conversation":
   - img
-- text: {{clock}} Ran for {{duration}} TTFT {{duration}} {{throughput}} tok/s
-- textbox "Message or run a task... / commands, @ files or sessions"
+- button "Usage 15.8K tok" [expanded]:
+  - img
+  - text: Usage 15.8K tok
+- button "Ran for {{duration}}":
+  - img
+  - text: Ran for {{duration}}
+- text: {{clock}}
+- textbox "Message or run a task, / commands, @ files or sessions"
 - button "Commands":
+  - img
+- button "Add attachment":
   - img
 - 'button "Access mode, current: Workspace Write"': Workspace Write
 - button "Select model, current DeepSeek-V4-Flash":
@@ -51,4 +47,9 @@
   - img
 - button "6% of context used"
 - button "Send message" [disabled]
-- text: 1 turns · 2 steps LLM {{duration}} · Tool call {{duration}} TTFT avg {{duration}} · {{throughput}} tok/s Cache hit 50% Input 15.7K tok · Output 112 tok
+- button "1 turns 2 steps · {{throughput}} tok/s":
+  - img
+  - text: 1 turns 2 steps{{throughput}} tok/s
+- button "15.8K tok · Cache hit 50%":
+  - img
+  - text: 15.8K tokCache hit 50%

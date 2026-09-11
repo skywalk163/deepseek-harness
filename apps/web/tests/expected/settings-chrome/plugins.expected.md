@@ -1,6 +1,6 @@
 - listitem:
-  - button "ui-settings, 已挂载, 已启用":
-    - strong: ui-settings
-    - img "已挂载"
+  - button "tool-subagent, tool-subagent, 已启用":
+    - strong: tool-subagent
     - text: 已启用
     - img
+    - code: tool-subagent

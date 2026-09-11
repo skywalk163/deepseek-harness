@@ -61,7 +61,7 @@ kind: "package-reference"
 
 ### 失败与恢复
 
-如果没有 runner 能强制执行受限模式，前台调用以 `SANDBOX_UNAVAILABLE` 失败，后台进程则记录 runner 失败事实——绝不会静默无隔离运行。可归因于 runner 的 spawn 失败以原始 spawn 错误作为详情；其他 spawn 拒绝保持本地执行器普通的命令启动语义。
+如果没有 runner 能强制执行受限模式，前台调用以 `SANDBOX_UNAVAILABLE` 失败，后台进程则记录 runner 失败事实——绝不会静默无隔离运行。只有当 provider rejection 的 `ENOENT`/`EACCES` 路径或 syscall 独立指向 `argv[0]` 时，才把它归因于 confinement runner；其他 rejection 保持本地执行器不声明阶段的 provider-failure 语义。
 
 -----
 
@@ -83,7 +83,7 @@ kind: "package-reference"
 |---|---|
 | [`src/index.ts`](src/index.ts) | 插件入口：`SandboxPwshExecutor`、按进程保留事实、run/start 包装 |
 | [`src/helpers.ts`](src/helpers.ts) | 拒绝、runner 失败与 runner spawn 失败分类 |
-| [`src/invariant.ts`](src/invariant.ts) | 不变式伴生插件（无运行时不变式；分类在结果中可观察） |
+| — | 不发布运行时不变式伴生入口；分类在结果中可观察。 |
 | `tests/` | 跨 ACL 与平台 runner 演练的行为 |
 
 ### 主要流程
@@ -110,7 +110,7 @@ kind: "package-reference"
 - [pwsh-local](../pwsh-local/README.zh.md) —— 本执行器继承的进程机制。
 - [sandbox-windows-acl](../../sandbox/sandbox-windows-acl/README.zh.md) —— Windows 受限令牌 runner 链。
 - [Bash 执行器子系统](../../../docs/subsystems/shell.zh.md) —— 请求/spec 词汇、结果与完整的服务约定。
-- [pwsh 执行器与工具笔记](../../../.agents/notes/implemented/feature/2026-08-01-pwsh-tool-and-executor.zh.md) —— pwsh 执行器与工具这一对背后的决策。
+- [pwsh 执行器与工具笔记](../../../.agents/notes/archived/feature/2026-08-01-pwsh-tool-and-executor.md) —— pwsh 执行器与工具这一对背后的决策。
 
 -----
 

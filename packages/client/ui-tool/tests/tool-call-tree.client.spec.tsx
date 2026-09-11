@@ -2,7 +2,6 @@
 /** ToolCallTree-owned root/subcall markers and selection projection. */
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, render } from '@testing-library/react'
-import type { ConnectionGeneration } from '@deepseek-ai/dsh-client-connection/client'
 import type { SessionSnapshot } from '@deepseek-ai/dsh-api-session-controller/client'
 import type { ToolResultNode } from '@deepseek-ai/dsh-client-ui-chat/client'
 import { makeTranslate } from '@deepseek-ai/dsh-client-test-runtime'
@@ -23,7 +22,7 @@ const root = (callId: string, call: ToolResultNode['call']): ToolResultNode => (
 function props(
   block: ToolResultNode,
   selectedCallId?: string,
-  generation?: ConnectionGeneration,
+  home?: string,
   owners?: ToolCallOwnerProps[],
 ): ToolTreeProps {
   const snapshot = {} as SessionSnapshot
@@ -49,27 +48,27 @@ function props(
     openFile: vi.fn(),
     inspectCall: vi.fn(),
     forkAt: vi.fn(),
+    loadImage: vi.fn(() => Promise.reject(new Error('not used'))),
     fileMentions: vi.fn(),
-    useConnectionGeneration: (selector => selector(generation)) as ToolTreeProps['useConnectionGeneration'],
+    useHostInfo: ((selector: (info: { home: string | undefined }) => unknown) => selector({ home })) as ToolTreeProps['useHostInfo'],
     t,
   } as unknown as ToolTreeProps
 }
 
 describe('ToolCallTree', () => {
-  it('owns the root marker, generic fallback, and selected state for a window-truncated call', () => {
+  it('owns the root marker and the generic fallback for a window-truncated call', () => {
     const block = root('w1', null)
     const view = render(<ToolCallTree {...props(block, 'w1')} />)
     const row = view.container.querySelector('[data-chat-call-id="w1"]')
     expect(row?.getAttribute('data-chat-anchor-key')).toBe('call:w1')
-    expect(row?.getAttribute('data-selected')).toBe('true')
     expect(view.container.querySelector('[data-variant="others"]')).not.toBeNull()
     expect(view.getByText('w1')).toBeTruthy()
   })
 
-  it('recursively renders a selected leaf without selecting its ancestors', () => {
+  it('renders a current-ID leaf under its historical-ID parent', () => {
     const owners: ToolCallOwnerProps[] = []
     const leaf = {
-      ...root('parent:code:1:code:1', { name: 'read', argsRaw: '{"path":"a.ts"}' }),
+      ...root('unrelated:ptc:7', { name: 'read', argsRaw: '{"path":"a.ts"}' }),
       parentCallId: 'parent:code:1',
     }
     const child = {
@@ -85,20 +84,18 @@ describe('ToolCallTree', () => {
     const nests = view.container.querySelectorAll('[data-subcalls]')
     expect(nests[0]?.parentElement).toBe(view.container.querySelector('[data-chat-call-id="parent"]'))
     expect(nests[1]?.parentElement).toBe(view.container.querySelector('[data-chat-call-id="parent:code:1"]'))
-    expect(view.container.querySelector('[data-chat-call-id="parent"]')?.hasAttribute('data-selected')).toBe(false)
-    expect(view.container.querySelector('[data-chat-call-id="parent:code:1"]')?.hasAttribute('data-selected')).toBe(false)
-    expect(view.container.querySelector('[data-chat-call-id="parent:code:1:code:1"]')?.getAttribute('data-selected')).toBe('true')
+    expect(view.container.querySelector('[data-chat-call-id="unrelated:ptc:7"]')).not.toBeNull()
     expect(nests).toHaveLength(2)
     expect(owners.map(owner => [owner.callId, owner.block.parentCallId ?? null])).toEqual([
       ['parent', null],
       ['parent:code:1', 'parent'],
-      ['parent:code:1:code:1', 'parent:code:1'],
+      ['unrelated:ptc:7', 'parent:code:1'],
     ])
   })
 
   it('abbreviates a POSIX home path in the generic tool summary', () => {
     const block = root('w1', { name: 'read', argsRaw: '{"path":"/h/docs/a.ts"}' })
-    const view = render(<ToolCallTree {...props(block, 'w1', { id: 1, host: { home: '/h' } })} />)
+    const view = render(<ToolCallTree {...props(block, 'w1', '/h')} />)
     expect(view.getByText('~/docs/a.ts')).toBeTruthy()
   })
 })

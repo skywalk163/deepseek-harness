@@ -28,10 +28,12 @@ export interface TypertRemoteEventFrame {
 
 /** Live Host values used to project one scoped Remote Event. */
 export interface TypertRemoteEventContext {
-  /** Live Host Context identified by the registered Host adapters. */
+  /** Live Agent Context that owns cancellation of the forwarded waterfall. */
   readonly value: Context
   /** Agent object carried directly by the waterfall request. */
   readonly subject: object
+  /** Agent identity read directly from the scoped event subject. */
+  readonly agentId: string
 }
 
 /** Result returned from a Client waterfall, or delegation back to the Host chain. */
@@ -99,23 +101,23 @@ export interface TypertGatewayWireStream {
 
 /** Stable infrastructure and boundary failures emitted before or after business execution. */
 export type TypertGatewayErrorCode =
-  | 'ambiguous-endpoint'
-  | 'arguments-invalid'
-  | 'binding-invalid'
-  | 'context-failed'
-  | 'context-not-found'
-  | 'context-unavailable'
-  | 'definition-unavailable'
-  | 'input-invalid'
-  | 'invocation-unavailable'
-  | 'lookup-failed'
-  | 'lookup-not-found'
-  | 'lookup-unavailable'
-  | 'method-unavailable'
-  | 'provider-mismatch'
-  | 'result-invalid'
-  | 'service-unavailable'
-  | 'signature-invalid'
+  | 'gateway/ambiguous-endpoint'
+  | 'gateway/arguments-invalid'
+  | 'gateway/binding-invalid'
+  | 'gateway/context-failed'
+  | 'gateway/context-not-found'
+  | 'gateway/context-unavailable'
+  | 'gateway/definition-unavailable'
+  | 'gateway/input-invalid'
+  | 'gateway/invocation-unavailable'
+  | 'gateway/lookup-failed'
+  | 'gateway/lookup-not-found'
+  | 'gateway/lookup-unavailable'
+  | 'gateway/method-unavailable'
+  | 'gateway/provider-mismatch'
+  | 'gateway/result-invalid'
+  | 'gateway/service-unavailable'
+  | 'gateway/signature-invalid'
 
 /** Host dispatcher consumed by Connection adapters. */
 export interface TypertGateway {

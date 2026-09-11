@@ -9,7 +9,7 @@ English | [中文](README.zh.md)
 
 ## Summary
 
-`dsh-plan-mode` adds plan mode to the agent: while it is active, the agent explores and designs before executing, guided by instructions the deployment writes, and presents the finished plan for your approval before carrying it out. You enter plan mode with `/plan` (optionally with a message or images) and leave it with `/plan off`; the finished plan arrives as a review where you can approve it or send the agent back to keep planning. Plan mode is guidance, not enforcement: every tool stays available, so sandbox mode and approval prompts remain the way to impose limits. Choose it when the agent should think before acting, and plan mode carries over when a session resumes or forks.
+Plan mode asks an agent to explore and design before execution, then presents the finished plan for your approval. Enter it with `/plan`, optionally with a message or ordered image and file attachments; leave with `/plan off`, approve the review to continue, or return feedback for more planning. Deployment-defined guidance controls planning behavior, but every tool remains available, so use sandbox mode and approval prompts for enforced limits. The active state survives session resume and forks. Choose it when you want a reviewed plan before the agent acts.
 
 ## Table of Contents
 
@@ -54,7 +54,7 @@ The generated [configuration catalog](../../../docs/config-catalog.md#deepseek-a
 
 Type `/plan` to enter plan mode, or `/plan <message>` to enter with an instruction — the message becomes your next request under plan guidance. Type `/plan off` to leave plan mode directly; it also cancels a plan-mode entry that has not taken effect yet.
 
-You can attach images to a `/plan` message, and they are included with your instruction. `/plan off` with images is rejected so the images are not lost. The `/plan` command is available wherever slash commands are supported, such as the Web client.
+You can attach images and generic files to a `/plan` message, and they are included with your instruction in selection order. `/plan off` with attachments is rejected before the mode changes, so the draft and cards remain available. The `/plan` command is available wherever slash commands are supported, such as the Web client.
 
 ### The reviewed exit
 
@@ -82,11 +82,11 @@ Plan mode is a product package, not a capability seam: there is no swappable bac
 
 ### Durable state and step-boundary appends
 
-The package persists one log-only whole-value event, `plan/mode`, and the last logged value is the state. A mode change appends immediately when no turn is open; during an open turn it stays pending until the next accepted in-turn pre-step — the only append point while an agent runs — and an append failure cannot block the turn. The `set`/`get`/`foldPlanMode` helpers and their exact return states live in [`src/index.ts`](src/index.ts).
+The package persists one log-only whole-value event, `plan/mode`, and the last logged value is the state. A mode change appends immediately when no turn is open; during an open turn it stays pending until the next accepted in-turn pre-step — the only append point while an agent runs — and an append failure cannot block the turn. The `set`/`get` service methods and their exact return states live in [`src/index.ts`](src/index.ts) and read the registered `plan` projection; the first dependent access fails explicitly when the registry or key is absent.
 
 ### The `/plan` command
 
-The command child activates only when a commands service is composed. It maps bare `/plan` to active, the exact argument `off` to inactive without model input, and any other non-empty argument to active plus the trimmed text submitted through `agent.steer()` as the next step's ordinary logged user message; image attachments ride the steered message, and `/plan off` with images fails before any mode change. Entry points other than the command may drive `ctx.planMode` directly; the exact branch handling is in [`src/index.ts`](src/index.ts).
+The command child activates only when a commands service is composed. It maps bare `/plan` to active, the exact argument `off` to inactive without model input, and any other non-empty argument to active plus the trimmed text submitted through `agent.steer()` as the next step's ordinary logged user message. Admitted image and file blocks keep their selection order in that message; `/plan off` with attachments fails before any mode change. Entry points other than the command may drive `ctx.planMode` directly; the exact branch handling is in [`src/index.ts`](src/index.ts).
 
 ### The exit tool
 
@@ -94,7 +94,7 @@ The command child activates only when a commands service is composed. It maps ba
 
 ### Session projection unit
 
-When `ctx.sessionProjections` is composed, the package registers the `plan` unit under an injected child. The unit turns logged `/plan` command runs into a candidate target, commits the logged state on `plan/mode`, and derives `{ active, pending }` for `view`, where `pending` is true only while an unsettled or successful selection differs from the logged state — a pure replay quantity recoverable from the log alone. The key merges into `SessionProjectionMap` from [`src/types.ts`](src/types.ts); the framework drives the unit, and unloading the plugin fiber unregisters the key.
+When `ctx.sessionProjections` is composed, the package registers the `plan` unit through optional injection. The unit turns logged `/plan` command runs into a candidate target, commits the logged state on `plan/mode`, and derives `{ active, pending }` for `view`, where `pending` is true only while an unsettled or successful selection differs from the logged state — a pure replay quantity recoverable from the log alone. The key merges into `SessionProjectionMap` from [`src/types.ts`](src/types.ts); the framework drives the unit, and unloading the plugin fiber unregisters the key. Plan-mode reads require this unit and the `turnBoundary` unit, and fail explicitly if the registry or either key is absent.
 
 ### Source map
 
@@ -149,11 +149,11 @@ The section is stable within plan mode, but entering or leaving changes the syst
 
 #### What the model sees
 
-`/plan`, `/plan off`, and their terminal results stay outside model history. A non-empty suffix other than the exact `off` argument becomes one user message through `agent.steer()` after plan mode is selected: any admitted image attachments as leading image blocks, then the trimmed text block. Bare `/plan` with admitted images steers one user message containing only those image blocks. An active `/plan off` selection contributes the standard logged user-switch notice only when the last request header described plan mode; cancelling a pending entry contributes none because no request observed it.
+`/plan`, `/plan off`, and their terminal results stay outside model history. A non-empty suffix other than the exact `off` argument becomes one user message through `agent.steer()` after plan mode is selected: admitted image and file blocks in selection order, then the trimmed text block. Bare `/plan` with admitted attachments steers one user message containing only those blocks. An active `/plan off` selection contributes the standard logged user-switch notice only when the last request header described plan mode; cancelling a pending entry contributes none because no request observed it.
 
 #### Token effect
 
-The optional message costs the same history tokens as submitting that content separately. Bare `/plan` without images and `/plan off` add none; bare `/plan` with images has the normal image-prompt cost. A narrated active exit adds the small retained switch notice.
+The optional message costs the same history tokens as submitting that content separately. Bare `/plan` without attachments and `/plan off` add none; bare `/plan` with attachments has the normal image and file-handle cost. A narrated active exit adds the small retained switch notice.
 
 #### KV Cache effect
 

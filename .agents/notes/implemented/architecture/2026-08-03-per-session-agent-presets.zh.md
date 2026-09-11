@@ -56,7 +56,7 @@ Status: implemented
 
 **创作 preset 是一次 RPC，而且是特权 RPC。** 组装是一个文件，但“去文件系统里改它”并不是浏览器能提供的操作，因此名单在 `select` 之外新增了 `read`/`write`/`remove`。Connection 用一个浏览器会话认证创作操作、`list`、`select` 与完整 Host API：组装指明一个会话所运行的插件，因此读取它是侦察，写入它是任意能力；选择 preset 则没有授予 `session.create` 携带 `agentPreset` 时尚未拥有的能力。这份能力也不由 preset 授予：部署自带的默认 preset 本就带着 `bash` 与文件系统工具，因此任何被允许开启会话的调用方，早已能以本进程的身份执行命令。约束是 id 自身的性质（`[a-z0-9][a-z0-9-]*`），在它成为目录名之前就检查，而不是事后再去审视拼接出的路径；文本使用 loader 自身的 schema 与方言解析，因此保存不会留下任何会话都无法加载的文件。随部署提供的 preset 拒绝写入与删除，因为部署自带的那一份正是用来对照有问题的本地 preset 的——这也让“先复制、再编辑”成为创作路径本身，而非事后补充。
 
-**在 agent 平面之外还有消费方的服务，不能搬进 preset。** 激进拆分把 `subagents` 注册表连同 spawn/fork 后端一起搬进了 delegation 组的 entry-local realm，于是 `dsh web` 直接起不来：`SubagentRuntime` 是 Host 行，它公开浏览器的跨会话 Remote 查询（`list`、`prompt`），因而永远等待一个只有会话才提供的服务。按会话各一份在两个层面上都是错的——provider 名只能注册一次，第二个会话本来也会相撞。注册表与所有共享后端，包括[固定的 Codex 与 Claude Code 产品 provider](2026-08-10-product-subagent-providers-in-shared-host.zh.md)，都属于宿主平面；preset 只贡献自己的 agent 应看见的委派**工具**，这些工具解析宿主注册表。`workflows` 保持 entry-local，因为 agent 之外没有任何东西读它。本该拦下它的是「检索注入方」这一步，而它没拦住：检索必须覆盖宿主包，而不只是 agent 平面的包。
+**在 agent 平面之外还有消费方的服务，不能搬进 preset。** 激进拆分把 `subagents` 注册表连同 spawn/fork 后端一起搬进了 delegation 组的 entry-local realm，于是 `dsh web` 直接起不来：`SubagentRuntime` 是 Host 行，它公开浏览器的跨会话 Remote 查询（`list`、`prompt`），因而永远等待一个只有会话才提供的服务。按会话各一份在两个层面上都是错的——provider 名只能注册一次，第二个会话本来也会相撞。注册表与所有共享后端，包括[固定的 Codex 与 Claude Code 产品 provider](../../archived/architecture/2026-08-10-product-subagent-providers-in-shared-host.md)，都属于宿主平面；preset 只贡献自己的 agent 应看见的委派**工具**，这些工具解析宿主注册表。`workflows` 保持 entry-local，因为 agent 之外没有任何东西读它。本该拦下它的是「检索注入方」这一步，而它没拦住：检索必须覆盖宿主包，而不只是 agent 平面的包。
 
 **真实组装测试若禁用了某个宿主行，就无法审计该行。** web 组装测试保持 API Gateway 与各业务 Remote 服务启用，同时禁用只承载传输的 webserver、Connection、Session export、资源与遥测行。替换为 browse 目录选择器后，其启动审计无需绑定端口即可覆盖 Host 平面的服务图。
 
@@ -64,7 +64,7 @@ Status: implemented
 
 **preset id 对模型可见，必须写入日志。** 它决定工具集与提示词，因此被恢复的会话必须还原同一份组装；记录它属于会话事实，而非运行时状态。它与 `cwd` 并列写在会话头部，并由会话摘要携带，使选择器显示的是某个会话实际运行的 preset，而非部署当前的默认值。
 
-**持久化的头部字段，在每个后端都写入之前都算不上持久。** `agentPreset` 带着正确的理由落在了 `SessionHeader` 上，而两个持久化后端都没有携带它：JSONL 头部行、SQLite `sessions` 行、以及派生的查询索引各自逐列映射头部，于是被恢复的会话回来时没有 preset，所有据以命名它的表层随之失声。`summarizeCold` 是同一个形状——它手工拼装冷列表行，而没有复用共享的投影。声明为持久的字段，需要一个跨越真实存储的测试，而不只是声明它的那个类型。
+**持久化 header 字段在 provider 写入前都算不上持久。** `agentPreset` 带着正确理由落在 `SessionHeader` 上，而 JSONL provider 遗漏了它；派生 query index 也显式映射 header 字段，于是恢复后的 Session 没有 preset，所有据以命名它的 surface 随之失声。`summarizeCold` 是同一种形式——它手工拼装 cold list row，而没有复用共享 projection。声明为持久的字段，需要一个跨越真实 store 的测试，而不只是声明它的类型。
 
 **这个选择属于它仍然可用的那个界面。** composer 座位几乎一生都处于禁用状态，因为一旦跑过一个轮次，preset 即固定。它移到了新建会话界面、工作区选择器旁边，选择在那里是**暂存**的：该界面先于它要应用到的会话存在，暂存值在某个会话成为当前会话且仍为空白时落地——这既覆盖工作区连接新建的会话，也覆盖它复用的那个空白会话，而搭 `sessions.create` 的便车会漏掉后者。它一经使用即被清空，与旁边的工作区选择器一致。至于运行中的会话在跑什么，则是其标题旁的一个只读标签：在那里放控件，等于承诺一次宿主会断然拒绝的切换。
 

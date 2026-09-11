@@ -8,7 +8,8 @@ import { ToolCallId, LlmAdapter, LlmRuntime } from '@deepseek-ai/dsh-llm'
 import type { ContentBlock } from '@deepseek-ai/dsh-llm'
 import type { GenerateOptions, LlmResolvedModelInfo, StreamChunk } from '@deepseek-ai/dsh-llm'
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
-import ToolRuntime, { type JsonValue } from '@deepseek-ai/dsh-tools'
+import ToolRuntime from '@deepseek-ai/dsh-tools'
+import type { JsonValue } from '@deepseek-ai/dsh-util-values'
 import type { PostToolDecision } from '@deepseek-ai/dsh-tools'
 import { publicToolName, syncTools, type ToolBridgeOptions } from '@deepseek-ai/dsh-mcp-client/src/tools.ts'
 import { createTransport } from '@deepseek-ai/dsh-mcp-client/src/transport.ts'
@@ -306,6 +307,50 @@ describe('syncTools', () => {
     expect(disposers.size).toBe(2)
     expect(ctx.tools.get('mcp__srv__page1')).toBeDefined()
     expect(ctx.tools.get('mcp__srv__page2')).toBeDefined()
+  })
+
+  it.each([
+    ['immediate', ['cursor1', 'cursor1']],
+    ['multi-page', ['cursor1', 'cursor2', 'cursor1']],
+  ])('rejects a pagination cycle through empty pages (%s)', async (_kind, cursors) => {
+    const client = createMockClient([])
+    client.listTools.mockRejectedValue(new Error('pagination continued after the repeated cursor'))
+    for (const nextCursor of cursors) {
+      client.listTools.mockResolvedValueOnce({ tools: [], nextCursor })
+    }
+
+    await expect(syncTools(client as never, ctx, defaultOpts, new Map()))
+      .rejects.toThrow('mcp-client(srv): server repeated a tools/list continuation cursor — invalid tool list')
+    expect(client.listTools).toHaveBeenCalledTimes(cursors.length)
+    expect(ctx.tools.schemas()).toEqual([])
+  })
+
+  it('keeps callable tools after a pagination cycle and accepts a later complete list', async () => {
+    const client = createMockClient([{ name: 'stable', inputSchema: { type: 'object' } }])
+    const previous = await syncTools(client as never, ctx, defaultOpts, new Map())
+    const stable = ctx.tools.get('mcp__srv__stable')
+    client.listTools
+      .mockResolvedValueOnce({ tools: [{ name: 'partial', inputSchema: { type: 'object' } }], nextCursor: 'cursor1' })
+      .mockResolvedValueOnce({ tools: [], nextCursor: 'cursor1' })
+      .mockRejectedValue(new Error('pagination continued after the repeated cursor'))
+
+    await expect(syncTools(client as never, ctx, defaultOpts, previous)).rejects.toThrow(/repeated.*cursor/)
+    expect(client.listTools).toHaveBeenCalledTimes(3)
+    expect(ctx.tools.get('mcp__srv__stable')).toBe(stable)
+    expect(ctx.tools.get('mcp__srv__partial')).toBeUndefined()
+    const result = await ctx.tools.execute({
+      signal: testToolSignal, callId: ToolCallId('pagination-retained'), name: 'mcp__srv__stable', arguments: {},
+    })
+    expect(result.isError).toBe(false)
+    expect(result.content).toEqual([{ type: 'text', text: 'ok' }])
+
+    client.listTools
+      .mockResolvedValueOnce({ tools: [], nextCursor: 'cursor1' })
+      .mockResolvedValueOnce({ tools: [{ name: 'recovered', inputSchema: { type: 'object' } }], nextCursor: undefined })
+    const recovered = await syncTools(client as never, ctx, defaultOpts, previous)
+    expect([...recovered.keys()]).toEqual(['mcp__srv__recovered'])
+    expect(ctx.tools.get('mcp__srv__stable')).toBeUndefined()
+    expect(client.listTools).toHaveBeenLastCalledWith({ cursor: 'cursor1' })
   })
 
   it('owns output validation independently of the SDK per-page cache', async () => {

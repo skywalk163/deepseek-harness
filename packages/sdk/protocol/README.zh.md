@@ -72,7 +72,7 @@ kind: "package-library"
 | [`src/transport.ts`](src/transport.ts) | `JsonRpcLineTransport`：行分帧、请求/响应/通知分发、错误映射、挂起请求记账 |
 | [`src/types.ts`](src/types.ts) | 具名请求/结果与通知载荷类型，按方法索引 |
 | [`src/index.ts`](src/index.ts) | 消费方接口：传输与具名协议类型 |
-| [`src/invariant.ts`](src/invariant.ts) | 不变式配套插件（无运行时不变式——纯协议库不持有事件流） |
+| — | 不发布运行时不变式伴生入口；纯协议库不持有事件流。 |
 
 ### 帧分发
 
@@ -91,7 +91,6 @@ kind: "package-library"
 - [TypeScript SDK 客户端](../client/README.zh.md) — 驱动该协议的客户端。
 - [Python SDK](../../../python/README.zh.md) — 复现这些结构的 Python 对侧实现。
 - [SDK 应用组合包](../../bundle/sdk-app/README.zh.md) — 启动服务器的 `dsh --profile sdk` 应用。
-- [TypeScript SDK 与 SDK subagent 后端决策](../../../.agents/notes/implemented/feature/2026-07-27-typescript-sdk-and-sdk-subagent-backend.zh.md) — 该协议所服务的客户端约定。
 
 -----
 

@@ -32,6 +32,7 @@ kind: "package-library"
 <a id="known-limitations-and-deferred-work"></a>
 
 - **持久化仅限浏览器本地**——持久化 store 使用 `localStorage` 中的 JSON；非浏览器运行时会禁用持久化，本包也不提供跨设备同步。
+- **Web 壳构建输入**——静态 ESM 为 Vite 保留第三方导入；独立消费方自行提供开发依赖（[依赖规则](../AGENTS.md#dependency-declaration)）。
 
 
 <a id="dev-note"></a>
@@ -43,3 +44,5 @@ kind: "package-library"
 无。
 
 </details>
+
+**运行时不变式：** 不发布伴生入口。本包只导出库引擎，不创建进程级状态；每个 store 实例由其所属测试覆盖。

@@ -8,11 +8,12 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
-import { existsSync, mkdtempSync, rmSync } from 'node:fs'
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, relative } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import SubagentRuntime from '@deepseek-ai/dsh-subagent'
+import SessionProjectionRegistry from '@deepseek-ai/dsh-session-projection'
 import type { Agent, AgentOptions } from '@deepseek-ai/dsh-agent'
 import {
   DeepSeekHarness,
@@ -37,7 +38,7 @@ import {
 
 const fakeRuntime = fileURLToPath(new URL('../../../sdk/client/tests/fake-runtime.ts', import.meta.url))
 const existingPatch = fileURLToPath(new URL(
-  './fixtures/loader/child.cordis.yml',
+  './fixtures/loader/child.patch.yml',
   import.meta.url,
 ))
 const defaultCreateHarness = runInternals.createHarness.bind(runInternals)
@@ -83,6 +84,7 @@ function request(text = 'p', signal = new AbortController().signal, agentOptions
 /** Mount the SDK backend pointed at the fake runtime, scripted by `fakeEnv`. */
 async function setup(fakeEnv: Record<string, string> = {}, config: Partial<sdk.Config> = {}) {
   const ctx = new Context()
+  await ctx.plugin(SessionProjectionRegistry)
   await ctx.plugin(SubagentRuntime)
   // The Config type models the post-validation shape, so the default registry
   // name is stated here; the Loader-composition fixture omits providerName and
@@ -111,9 +113,9 @@ function expectedFailure(fields: string): string {
 /**
  * Poll until `file` exists (the fake touches it once the probed state is
  * reached), so cancel tests wait on a CONDITION rather than an arbitrary
- * timeout. Fails loud if the child never signals readiness.
+ * timeout. The caller supplies the lane's effective test budget.
  */
-async function waitForFile(file: string, timeoutMs = 5000): Promise<void> {
+async function waitForFile(file: string, timeoutMs: number): Promise<void> {
   const deadline = Date.now() + timeoutMs
   while (!existsSync(file)) {
     if (Date.now() > deadline) throw new Error(`fake runtime never became ready (${file})`)
@@ -328,7 +330,7 @@ describe('dsh-subagent-dsh-sdk provider', () => {
     await ctx.fiber.dispose()
   })
 
-  it('keeps streamed text when a malformed final message prevents completion', async () => {
+  it('keeps durable attempt text when a malformed final message prevents completion', async () => {
     const ctx = await setup({ FAKE_MALFORMED_MESSAGE: '1', FAKE_TEXT: 'stream-only answer' })
     const run = await ctx.subagents.start('dsh-sdk', request())
     const result = await run.result
@@ -353,11 +355,10 @@ describe('dsh-subagent-dsh-sdk provider', () => {
     await ctx.fiber.dispose()
   })
 
-  it('keeps streamed text when the terminal message is an empty usage-only step', async () => {
-    // The child streams its answer, then emits an empty-content
-    // assistant/message (the harness loop appends one to host usage on a
-    // max-tokens step that assembled no text blocks). The empty message is
-    // not assistant output and must not erase the streamed answer.
+  it('keeps durable attempt text when the terminal message is an empty usage-only step', async () => {
+    // A prior attempt retained its text without a surface message; the next
+    // max-tokens attempt commits only an empty usage anchor. The empty message
+    // is not Assistant output and must not erase the durable attempt fallback.
     const ctx = await setup({ FAKE_EMPTY_MESSAGE: '1', FAKE_REASON_KIND: 'max-tokens' })
     const run = await ctx.subagents.start('dsh-sdk', request())
     const result = await run.result
@@ -523,7 +524,7 @@ describe('dsh-subagent-dsh-sdk provider', () => {
     await ctx.fiber.dispose()
   })
 
-  it('cancelling between handshake and publish rejects start after reap', async () => {
+  it('cancelling between handshake and publish rejects start after reap', async ({ task }) => {
     // The abort lands while the child is INSIDE initialize (ready-file
     // handshake window): the fake touches READY, we abort, then GO lets the
     // handshake complete — so the post-race `flags.cancelled` recheck must
@@ -531,6 +532,8 @@ describe('dsh-subagent-dsh-sdk provider', () => {
     const tmp = mkdtempSync(join(tmpdir(), 'subagent-dsh-sdk-midcancel-'))
     const ready = join(tmp, 'ready')
     const go = join(tmp, 'go')
+    const createHarness = runInternals.createHarness.bind(runInternals)
+    runInternals.createHarness = options => createHarness({ ...options, initializeTimeoutMs: task.timeout })
     try {
       const controller = new AbortController()
       const spec: SdkRunSpec = {
@@ -546,12 +549,24 @@ describe('dsh-subagent-dsh-sdk provider', () => {
         disposeGraceMs: 200,
       }
       const pending = startSdkRun(request('p', controller.signal), spec)
-      await waitForFile(ready)
-      controller.abort('mid-handshake')
-      const { writeFileSync } = await import('node:fs')
-      writeFileSync(go, 'go\n')
-      await expect(pending).rejects.toThrow('aborted before the SDK child started')
+      // Observe failed startup while readiness is pending; rollback owns the child.
+      const settled = pending.then(
+        run => ({ kind: 'started' as const, run }),
+        (error: unknown) => ({ kind: 'failed' as const, error }),
+      )
+      try {
+        await waitForFile(ready, task.timeout)
+        controller.abort('mid-handshake')
+        writeFileSync(go, 'go\n')
+        await expect(pending).rejects.toThrow('aborted before the SDK child started')
+      } finally {
+        controller.abort('test cleanup')
+        writeFileSync(go, 'go\n')
+        const outcome = await settled
+        if (outcome.kind === 'started') await outcome.run.dispose()
+      }
     } finally {
+      runInternals.createHarness = createHarness
       rmSync(tmp, { recursive: true, force: true })
     }
   })
@@ -619,9 +634,11 @@ describe('dsh-subagent-dsh-sdk provider', () => {
       provider: 'p',
       model: 'm',
       env: { FAKE_REASON_KIND: reason },
-      shutdownTimeoutMs: 100,
-      disposeEofGraceMs: 200,
-      disposeGraceMs: 200,
+      // Product-default dispose budgets: two real children are reaped under
+      // runner contention, where tight windows misreport slow SIGKILL reaps.
+      shutdownTimeoutMs: DEFAULT_SHUTDOWN_TIMEOUT_MS,
+      disposeEofGraceMs: DEFAULT_DISPOSE_EOF_GRACE_MS,
+      disposeGraceMs: DEFAULT_DISPOSE_GRACE_MS,
     })
     const [errored, unknown] = await Promise.all([start('error'), start('unknown-reason')])
     const [errorResult, unknownResult] = await Promise.all([errored.result, unknown.result])
@@ -796,6 +813,7 @@ describe('dsh-subagent-dsh-sdk provider', () => {
 
   it('registers under the configured provider name and unregisters on fiber dispose (HMR safety)', async () => {
     const ctx = new Context()
+    await ctx.plugin(SessionProjectionRegistry)
     await ctx.plugin(SubagentRuntime)
     const fiber = await ctx.plugin(sdk, {
       providerName: 'sdk-hmr',
@@ -822,6 +840,7 @@ describe('dsh-subagent-dsh-sdk provider', () => {
 
   it('rejects non-positive timing bounds at load', async () => {
     const ctx = new Context()
+    await ctx.plugin(SessionProjectionRegistry)
     await ctx.plugin(SubagentRuntime)
     const base = { providerName: 'sdk', profile: 'sdk', patches: [], dshHome: process.cwd(), provider: 'p', model: 'm', env: {} }
     await expect(ctx.plugin(sdk, { ...base, shutdownTimeoutMs: 0 })).rejects.toThrow('shutdownTimeoutMs must be a positive finite number')
@@ -869,6 +888,7 @@ describe('dsh-subagent-dsh-sdk provider', () => {
     'rejects invalid maxTokens %s at load',
     async (maxTokens) => {
       const ctx = new Context()
+      await ctx.plugin(SessionProjectionRegistry)
       await ctx.plugin(SubagentRuntime)
       await expect(ctx.plugin(sdk, {
         providerName: 'sdk',
@@ -888,6 +908,7 @@ describe('dsh-subagent-dsh-sdk provider', () => {
     'defensively rejects invalid maxTokens %s when apply is called directly',
     async (maxTokens) => {
       const ctx = new Context()
+      await ctx.plugin(SessionProjectionRegistry)
       await ctx.plugin(SubagentRuntime)
       expect(() => { sdk.apply(ctx, {
         providerName: 'sdk',
@@ -908,6 +929,7 @@ describe('dsh-subagent-dsh-sdk provider', () => {
 
   it('rejects an empty config cwd at load', async () => {
     const ctx = new Context()
+    await ctx.plugin(SessionProjectionRegistry)
     await ctx.plugin(SubagentRuntime)
     await expect(ctx.plugin(sdk, {
       providerName: 'sdk',

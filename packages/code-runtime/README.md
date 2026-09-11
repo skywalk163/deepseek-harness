@@ -9,7 +9,7 @@ English | [中文](README.zh.md)
 
 ## Summary
 
-The `code-runtime/` group provides program execution: a model writes one program that calls host-provided functions as ordinary async calls, and a runtime executes it in isolation and returns only what the program printed and returned. One package defines the shared capability (`ctx.codeRuntime`), a second executes TypeScript programs in a fresh Node worker thread, and a third owns the wire protocol between a Node host and a CPython subprocess for the Python backend. Every run is independent — no state carries from one program to the next — and failures come back as part of the result, so the caller can see why a program failed and feed that back to the model.
+The `code-runtime/` group lets a model write one program that calls host-provided functions as ordinary async calls, then returns only the program's printed output and return value. Choose the TypeScript backend for execution in an isolated Node worker, or the experimental Python backend when a CPython process is required. Each run starts without state from earlier programs. Failures are returned as results so callers can diagnose them or provide them to the model.
 
 ## Table of Contents
 
@@ -28,7 +28,7 @@ These three packages together provide program execution; each README describes w
 |---|---|---|
 | [`code-runtime/`](code-runtime/README.md) | Defines what a code runtime does: run one program against host-provided bindings and report what it printed and returned | `ctx.codeRuntime` |
 | [`code-runtime-worker-thread/`](code-runtime-worker-thread/README.md) | Executes TypeScript programs, each in a fresh Node worker thread | registers `ctx.codeRuntime` |
-| [`code-runtime-python/`](code-runtime-python/README.md) | Owns the fd-3 wire protocol between a Node host and a CPython subprocess, the Python backend's protocol layer | — |
+| [`experimental/code-runtime-python/`](../experimental/code-runtime-python/README.md) | The experimental Python backend: owns the fd-3 wire protocol between a Node host and a CPython subprocess and the CPython runtime implementation | — |
 
 -----
 

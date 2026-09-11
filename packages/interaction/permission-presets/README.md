@@ -9,7 +9,7 @@ English | [中文](README.zh.md)
 
 ## Summary
 
-`dsh-permission-presets` gives a deployment one user-facing Permissions selector that bundles two independent enforcement knobs — the sandbox mode and the approval policy — into named presets. Selecting a preset applies the sandbox mode and approval policy together, while each knob keeps its own value, so sandbox execution, approval, prompt narration, and replay each read their own setting. The default table ships `workspace-write` (workspace-write + ask) and `danger-full-access` (danger-full-access + never); a knob combination matching no preset reads back as the derived `custom`, which clients may display but never select. The service also owns the `permission` settings namespace whose default applies only when a later session is created, and two optional children — a `permissions` session projection and the `/permission` command — expose the same surface to the Web client. Mounting it requires a confining bash executor and the approval service; it owns no enforcement itself.
+Permission presets give users one selector for applying sandbox mode and approval policy together. A deployment can configure named presets and a default for newly created sessions; changing that default does not alter existing sessions, and the shipped table includes `workspace-write` and `danger-full-access`. If the current combination matches no preset, clients show the derived `custom` state, but users cannot select or persist it; switching presets changes only settings whose effective values differ. The `/permission` command reports or changes the current preset, while sandbox execution and approval handling remain separate enforcement mechanisms.
 
 ## Table of Contents
 
@@ -87,15 +87,15 @@ The observable behavior is covered in [Use this package](#use-this-package); thi
 
 ### Read side and `custom`
 
-`current(events)` folds the three whole-value knob events over the composition defaults (`ctx.shell.sandboxMode` and the approval config). A still-matching last selection wins shared-bundle ties; otherwise the first table match wins; otherwise the derived `CUSTOM_PRESET` is returned. The `permissions` projection unit applies the same fold one event at a time and serves the select to clients.
+`current(session)` reads the `permissions` projection, whose unit folds the three whole-value knob events over the composition defaults (`ctx.shell.sandboxMode` and the approval config). The host state also retains whether `session/end-seed` has occurred, so session pinning distinguishes an explicitly empty restored seed from a genuinely fresh session without rescanning the log. A still-matching last selection wins shared-bundle ties; otherwise the first table match wins; otherwise the derived `CUSTOM_PRESET` is returned. A missing registry or projection key fails explicitly.
 
 ### Session pinning and blank reuse
 
-Mounting pins every live and future session: a genuinely fresh session gains the default preset and both knob facts, while seeded or partially initialized sessions keep their effective knob values and gain only missing durable facts.
+Mounting pins every live and future session: a genuinely fresh session gains the default preset and both knob facts, while seeded or partially initialized sessions keep their effective knob values and gain only missing durable facts. The projection-owned seed marker makes this decision from the same incremental state as the knob values.
 
 ### Optional children
 
-The `permissions` projection unit registers only when a `ctx.sessionProjections` registry is composed; the `/permission` command registers only when a `ctx.commands` registry is composed. Headless assemblies without either registry stay unaffected.
+The `permissions` projection unit registers only when a `ctx.sessionProjections` registry is composed; the `/permission` command registers only when a `ctx.commands` registry is composed. Calls that derive the current preset or pin an initial selection require the projection and fail explicitly without its registry or key.
 
 </details>
 

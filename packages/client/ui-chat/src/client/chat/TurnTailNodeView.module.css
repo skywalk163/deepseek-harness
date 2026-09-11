@@ -4,13 +4,9 @@
   gap: 16px;
 }
 
-.footer {
-  display: flex;
-  min-width: 0;
-  flex-direction: column;
-  gap: 4px;
-}
-
 .actions {
+  /* With tail content, this adds to the root gap; without it, the Chat flow's
+     preceding-item offset supplies the other 16px. */
+  margin-top: 4px;
   margin-left: -6px;
 }

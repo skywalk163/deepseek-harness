@@ -12,9 +12,16 @@ import {
   type InvocationDescriptor,
   type TypertContextMap,
   type TypertContextWire,
-  TypertRemoteFailure,
+  RemoteError,
 } from '@deepseek-ai/dsh-typert-protocol'
 import TypertRegistry from '@deepseek-ai/dsh-typert-registry'
+
+declare module '@deepseek-ai/dsh-typert-protocol' {
+  interface RemoteErrorDetailsMap {
+    'fixture/rejected': { readonly retryable: boolean }
+    'fixture/broken': { readonly count: bigint }
+  }
+}
 import { provideBrowserCredentials } from './browser-credentials.ts'
 import TypertGatewayService, {
   TypertGatewayError,
@@ -118,16 +125,12 @@ class FeedService extends Service {
 
   @Remote({ mode: 'stream' })
   reject(): Iterable<string> {
-    throw new TypertRemoteFailure({
-      code: 'fixture-rejected', message: 'fixture rejected the stream', details: { retryable: false },
-    })
+    throw new RemoteError('fixture/rejected', 'fixture rejected the stream', { retryable: false })
   }
 
   @Remote({ mode: 'stream' })
   rejectWithNonJsonDetails(): Iterable<string> {
-    throw new TypertRemoteFailure({
-      code: 'fixture-broken', message: 'fixture emitted invalid details', details: { count: 1n },
-    })
+    throw new RemoteError('fixture/broken', 'fixture emitted invalid details', { count: 1n })
   }
 
   unary(label: string): string {
@@ -185,6 +188,7 @@ function pendingInvocation(
   context: Context,
   signal?: AbortSignal,
   prompt = 'ship',
+  identity: unknown = agentId('agent-1'),
 ): PendingInvocationProbe {
   const subject = { ctx: context }
   const settled = Promise.withResolvers<TypertRemoteEventOutcome>()
@@ -198,7 +202,7 @@ function pendingInvocation(
     dispatch: {
       event: 'fixture/approval',
       request: { prompt, agent: subject, ...(signal === undefined ? {} : { signal }) },
-      context: { value: context, subject },
+      context: { value: context, subject, agentId: identity as string },
       resolve,
       reject,
     },
@@ -215,7 +219,7 @@ afterEach(async () => {
 
 describe('Typert Remote streams', () => {
   it('validates the WebSocket heartbeat timer range', () => {
-    expect(TypertGatewayService.Config({})).toEqual({ websocketHeartbeatIntervalMs: 30_000 })
+    expect(TypertGatewayService.Config({})).toEqual({ websocketHeartbeatIntervalMs: 2_000 })
     expect(TypertGatewayService.Config({ websocketHeartbeatIntervalMs: MAX_TIMER_DELAY_MS }))
       .toEqual({ websocketHeartbeatIntervalMs: MAX_TIMER_DELAY_MS })
     for (const websocketHeartbeatIntervalMs of [0, 1.5, MAX_TIMER_DELAY_MS + 1]) {
@@ -262,7 +266,7 @@ describe('Typert Remote streams', () => {
     }))).resolves.toEqual([1n])
     await expect(ctx.typertGateway.stream({
       namespace: 'feed', method: 'missing', args: {},
-    })).rejects.toMatchObject({ code: 'result-invalid' })
+    })).rejects.toMatchObject({ code: 'gateway/result-invalid' })
 
     await expect(collect(await ctx.typertGateway.stream({
       namespace: 'feed', method: 'src', args: { label: 'c' },
@@ -286,10 +290,10 @@ describe('Typert Remote streams', () => {
     const { ctx } = await setup(false)
     await expect(ctx.typertGateway.invoke({
       namespace: 'feed', method: 'sync', args: { label: 'a' },
-    })).rejects.toMatchObject({ code: 'signature-invalid' } satisfies Partial<TypertGatewayError>)
+    })).rejects.toMatchObject({ code: 'gateway/signature-invalid' } satisfies Partial<TypertGatewayError>)
     await expect(ctx.typertGateway.stream({
       namespace: 'feed', method: 'unary', args: { label: 'a' },
-    })).rejects.toMatchObject({ code: 'signature-invalid' } satisfies Partial<TypertGatewayError>)
+    })).rejects.toMatchObject({ code: 'gateway/signature-invalid' } satisfies Partial<TypertGatewayError>)
   })
 
   it('uses the configured WebSocket heartbeat interval', { timeout: 1_000 }, async () => {
@@ -345,13 +349,13 @@ describe('Typert Remote streams', () => {
         { type: 'end', streamId: 'invalid' },
       ])
       expect(frames.find(frame => frame.streamId === 'non-json')).toMatchObject({
-        type: 'error', error: { code: 'internal' },
+        type: 'error', error: { code: 'gateway/internal' },
       })
       expect(frames.find(frame => frame.streamId === 'rejected')).toEqual({
         type: 'error',
         streamId: 'rejected',
         error: {
-          code: 'fixture-rejected',
+          code: 'fixture/rejected',
           message: 'fixture rejected the stream',
           details: { retryable: false },
         },
@@ -463,13 +467,7 @@ describe('Typert Remote streams', () => {
   it('cancels a pending waterfall when its source rejects during removal', async () => {
     const { ctx } = await setup(true)
     const agent = ctx.extend()
-    ctx.typert.contexts.registerHost('agent', {
-      wire: 'agentId',
-      wireTypeSymbol: '@fixture#AgentId',
-      identity: candidate => candidate === agent ? agentId('agent-removal') : undefined,
-      resolve: id => id === 'agent-removal' ? agent : undefined,
-    })
-    const pending = pendingInvocation(agent)
+    const pending = pendingInvocation(agent, undefined, 'ship', agentId('agent-removal'))
     const rejected = expect(pending.outcome).rejects.toThrow(
       'forwarded Remote event source was removed',
     )
@@ -494,7 +492,7 @@ describe('Typert Remote streams', () => {
     client.socket.close()
   })
 
-  it('delegates unavailable Contexts and rejects malformed scoped invocations', async () => {
+  it('rejects malformed scoped invocations and delegates a released Context', async () => {
     const { ctx } = await setup(false)
     const source = new RemoteEventSourceProbe()
     const unregister = ctx.typertGateway.registerRemoteEvents(source.source, REMOTE_HOST)
@@ -511,28 +509,15 @@ describe('Typert Remote streams', () => {
       await rejected
     }
 
-    const unavailable = pendingInvocation(ctx)
-    source.push(unavailable.dispatch)
-    await expect(unavailable.outcome).resolves.toEqual({ kind: 'next' })
-    expect(unavailable.reject).not.toHaveBeenCalled()
-
     let selected = ctx.extend()
-    let identity: unknown = 1n
-    ctx.typert.contexts.registerHost('agent', {
-      wire: 'agentId',
-      wireTypeSymbol: '@fixture#AgentId',
-      identity: candidate => candidate === selected ? identity as AgentWireId : undefined,
-      resolve: () => selected,
-    })
-    const nonJsonIdentity = pendingInvocation(selected)
+    const nonJsonIdentity = pendingInvocation(selected, undefined, 'ship', 1n)
     const nonJsonRejected = expect(nonJsonIdentity.outcome).rejects.toThrow(
       'require a non-empty Agent identity',
     )
     source.push(nonJsonIdentity.dispatch)
     await nonJsonRejected
 
-    identity = 'agent-invalid-request'
-    const invalidRequest = pendingInvocation(selected)
+    const invalidRequest = pendingInvocation(selected, undefined, 'ship', agentId('agent-invalid-request'))
     const invalidRequestRejected = expect(invalidRequest.outcome).rejects.toThrow(
       'must carry its scoped Agent directly',
     )
@@ -545,18 +530,16 @@ describe('Typert Remote streams', () => {
     const staleFiber = ctx.plugin(() => {})
     await staleFiber
     selected = staleFiber.ctx
-    identity = 'agent-stale'
     await staleFiber.dispose()
-    const stale = pendingInvocation(selected)
+    const stale = pendingInvocation(selected, undefined, 'ship', agentId('agent-stale'))
     source.push(stale.dispatch)
     await expect(stale.outcome).resolves.toEqual({ kind: 'next' })
     expect(stale.reject).not.toHaveBeenCalled()
 
     selected = ctx.extend()
-    identity = 'agent-cancelled'
     const abort = new AbortController()
     abort.abort('fixture non-error cancellation')
-    const cancelled = pendingInvocation(selected, abort.signal)
+    const cancelled = pendingInvocation(selected, abort.signal, 'ship', agentId('agent-cancelled'))
     const cancelledOutcome = expect(cancelled.outcome).rejects.toMatchObject({
       message: 'typert gateway: Remote event was cancelled',
       cause: 'fixture non-error cancellation',
@@ -594,19 +577,13 @@ describe('Typert Remote streams', () => {
     const source = new RemoteEventSourceProbe()
     const unregister = ctx.typertGateway.registerRemoteEvents(source.source, REMOTE_HOST)
     const agent = ctx.extend()
-    ctx.typert.contexts.registerHost('agent', {
-      wire: 'agentId',
-      wireTypeSymbol: '@fixture#AgentId',
-      identity: candidate => candidate === agent ? agentId('agent-collision') : undefined,
-      resolve: id => id === 'agent-collision' ? agent : undefined,
-    })
     const firstId = '00000000-0000-4000-8000-000000000001' as ReturnType<typeof randomUUID>
     const secondId = '00000000-0000-4000-8000-000000000002' as ReturnType<typeof randomUUID>
     randomUuid.mockReturnValueOnce(firstId).mockReturnValueOnce(firstId).mockReturnValueOnce(secondId)
     const firstAbort = new AbortController()
     const secondAbort = new AbortController()
-    const first = pendingInvocation(agent, firstAbort.signal, 'first')
-    const second = pendingInvocation(agent, secondAbort.signal, 'second')
+    const first = pendingInvocation(agent, firstAbort.signal, 'first', agentId('agent-collision'))
+    const second = pendingInvocation(agent, secondAbort.signal, 'second', agentId('agent-collision'))
 
     source.push(first.dispatch)
     await vi.waitFor(() => { expect(randomUuid).toHaveBeenCalledTimes(1) })
@@ -648,12 +625,6 @@ describe('Typert Remote streams', () => {
     const source = new RemoteEventSourceProbe()
     const unregister = ctx.typertGateway.registerRemoteEvents(source.source, REMOTE_HOST)
     const agent = ctx.extend()
-    ctx.typert.contexts.registerHost('agent', {
-      wire: 'agentId',
-      wireTypeSymbol: '@fixture#AgentId',
-      identity: candidate => candidate === agent ? agentId('agent-1') : undefined,
-      resolve: id => id === 'agent-1' ? agent : undefined,
-    })
     const first = await openEventClient(ctx, 'events-a')
     const second = await openEventClient(ctx, 'events-b')
     const pending = pendingInvocation(agent)
@@ -702,14 +673,8 @@ describe('Typert Remote streams', () => {
     const source = new RemoteEventSourceProbe()
     const unregister = ctx.typertGateway.registerRemoteEvents(source.source, REMOTE_HOST)
     const agent = ctx.extend()
-    ctx.typert.contexts.registerHost('agent', {
-      wire: 'agentId',
-      wireTypeSymbol: '@fixture#AgentId',
-      identity: candidate => candidate === agent ? agentId('agent-rejected') : undefined,
-      resolve: id => id === 'agent-rejected' ? agent : undefined,
-    })
     const client = await openEventClient(ctx, 'events-rejected')
-    const pending = pendingInvocation(agent)
+    const pending = pendingInvocation(agent, undefined, 'ship', agentId('agent-rejected'))
     source.push(pending.dispatch)
     await vi.waitFor(() => { expect(deliveredInvocation(client)).toBeDefined() })
     const frame = deliveredInvocation(client)!
@@ -742,12 +707,6 @@ describe('Typert Remote streams', () => {
     const source = new RemoteEventSourceProbe()
     const unregister = ctx.typertGateway.registerRemoteEvents(source.source, REMOTE_HOST)
     const agent = ctx.extend()
-    ctx.typert.contexts.registerHost('agent', {
-      wire: 'agentId',
-      wireTypeSymbol: '@fixture#AgentId',
-      identity: candidate => candidate === agent ? agentId('agent-1') : undefined,
-      resolve: id => id === 'agent-1' ? agent : undefined,
-    })
     const first = await openEventClient(ctx, 'events-next-a')
     const second = await openEventClient(ctx, 'events-next-b')
     const pending = pendingInvocation(agent)
@@ -775,13 +734,7 @@ describe('Typert Remote streams', () => {
     const source = new RemoteEventSourceProbe()
     const unregister = ctx.typertGateway.registerRemoteEvents(source.source, REMOTE_HOST)
     const agent = ctx.extend()
-    ctx.typert.contexts.registerHost('agent', {
-      wire: 'agentId',
-      wireTypeSymbol: '@fixture#AgentId',
-      identity: candidate => candidate === agent ? agentId('agent-late-client') : undefined,
-      resolve: id => id === 'agent-late-client' ? agent : undefined,
-    })
-    const pending = pendingInvocation(agent, undefined, 'before-connect')
+    const pending = pendingInvocation(agent, undefined, 'before-connect', agentId('agent-late-client'))
 
     source.push(pending.dispatch)
     await vi.waitFor(() => { expect(randomUuid).toHaveBeenCalledTimes(1) })
@@ -808,12 +761,6 @@ describe('Typert Remote streams', () => {
     const source = new RemoteEventSourceProbe()
     const unregister = ctx.typertGateway.registerRemoteEvents(source.source, REMOTE_HOST)
     const agent = ctx.extend()
-    ctx.typert.contexts.registerHost('agent', {
-      wire: 'agentId',
-      wireTypeSymbol: '@fixture#AgentId',
-      identity: candidate => candidate === agent ? agentId('agent-1') : undefined,
-      resolve: id => id === 'agent-1' ? agent : undefined,
-    })
     const original = await openEventClient(ctx, 'events-original')
     const pending = pendingInvocation(agent)
     source.push(pending.dispatch)
@@ -845,24 +792,10 @@ describe('Typert Remote streams', () => {
     const contextFiber = ctx.plugin(() => {})
     await contextFiber
     const contextAgent = contextFiber.ctx
-    ctx.typert.contexts.registerHost('agent', {
-      wire: 'agentId',
-      wireTypeSymbol: '@fixture#AgentId',
-      identity: (candidate) => {
-        if (candidate === signalAgent) return agentId('agent-signal')
-        if (candidate === contextAgent) return agentId('agent-context')
-        return undefined
-      },
-      resolve: (id) => {
-        if (id === 'agent-signal') return signalAgent
-        if (id === 'agent-context') return contextAgent
-        return undefined
-      },
-    })
     const client = await openEventClient(ctx, 'events-cancel')
 
     const abort = new AbortController()
-    const signalPending = pendingInvocation(signalAgent, abort.signal, 'signal')
+    const signalPending = pendingInvocation(signalAgent, abort.signal, 'signal', agentId('agent-signal'))
     source.push(signalPending.dispatch)
     await vi.waitFor(() => { expect(deliveredInvocation(client)).toBeDefined() })
     const signalFrame = deliveredInvocation(client)!
@@ -883,7 +816,7 @@ describe('Typert Remote streams', () => {
       })
     })
 
-    const contextPending = pendingInvocation(contextAgent, undefined, 'context')
+    const contextPending = pendingInvocation(contextAgent, undefined, 'context', agentId('agent-context'))
     source.push(contextPending.dispatch)
     let contextFrame: RemoteEventInvocationFrame | undefined
     await vi.waitFor(() => {
@@ -896,7 +829,7 @@ describe('Typert Remote streams', () => {
           && Reflect.get(value, 'eventId') !== signalFrame.eventId) as RemoteEventInvocationFrame | undefined
       expect(contextFrame).toBeDefined()
     })
-    const contextOutcome = expect(contextPending.outcome).rejects.toThrow('Context "agent" was released')
+    const contextOutcome = expect(contextPending.outcome).rejects.toThrow('Agent Context was released')
     await contextFiber.dispose()
     await contextOutcome
     await vi.waitFor(() => {

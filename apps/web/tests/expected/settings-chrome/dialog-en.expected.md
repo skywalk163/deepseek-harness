@@ -17,10 +17,6 @@
   - button "Close":
     - img
     - text: Close
-  - text: Agent preset Applies to sessions you start from now on. Running sessions keep the preset they began with.
-  - button "Standard mode":
-    - text: Standard mode
-    - img
   - text: Permission Choose the default permission mode for new sessions
   - button "Workspace Write":
     - text: Workspace Write
@@ -48,7 +44,7 @@
   - button "Compact":
     - text: Compact
     - img
-  - text: Enter behavior while busy Busy only; Cmd/Ctrl+Enter uses the other behavior
+  - text: Send behavior while busy What Enter and the Send button do while the agent is running; Cmd/Ctrl+Enter uses the other behavior
   - button "Queue":
     - text: Queue
     - img

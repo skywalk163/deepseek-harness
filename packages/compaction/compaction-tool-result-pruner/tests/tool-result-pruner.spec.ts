@@ -9,6 +9,7 @@ import SessionStore, {
 import type { SurfaceEvent } from '@deepseek-ai/dsh-session'
 import * as SessionInvariant from '@deepseek-ai/dsh-session/invariant'
 import InvariantRegistry from '@deepseek-ai/dsh-invariants'
+import SessionProjectionRegistry from '@deepseek-ai/dsh-session-projection'
 import TokenMeter from '@deepseek-ai/dsh-token-meter'
 import ToolResultPruner, {
   codePointLength,
@@ -29,12 +30,15 @@ function service(config: ToolResultPruneConfig = SMALL): ToolResultPruner {
   const ctx = new Context()
   // Service constructors self-register, so `ctx.tokenMeter` resolves for the
   // shadow-price pricing without a full plugin boot.
+  new SessionProjectionRegistry(ctx)
   void new TokenMeter(ctx)
   return new ToolResultPruner(ctx, config)
 }
 
 /** Pricing oracle mirroring the service's estimator for expectations. */
-const METER = new TokenMeter(new Context())
+const METER_CTX = new Context()
+new SessionProjectionRegistry(METER_CTX)
+const METER = new TokenMeter(METER_CTX)
 
 function appendToolStep(
   session: Session,
@@ -49,6 +53,7 @@ function appendToolStep(
   })
   session.append('step/start', { turn, step: 1 })
   session.append('assistant/message', {
+    stream: [],
     turn,
     step: 1,
     message: createMessage({
@@ -64,7 +69,7 @@ function appendToolStep(
   const result = session.append('tool/result', {
     turn,
     step: 1,
-    message: createToolResultMessage({ callId, content, isError: false }),
+    message: createToolResultMessage({ callId, content, isError: extra['error'] !== undefined }),
     ...extra,
   }, { surfaceOp: 'append' })
   session.append('step/end', { turn, step: 1 })
@@ -181,8 +186,8 @@ describe('ToolResultPruner session transaction', () => {
     expect(entry).toMatchObject({ originalSeq, callId: ToolCallId('one'), charsBefore: 100 })
     expect(entry.charsAfter).toBeLessThanOrEqual(50)
 
-    const original = session.events[originalSeq]!
-    const replacement = session.events[entry.replacementSeq]! as SurfaceEvent
+    const original = session.snapshotEvents()[originalSeq]!
+    const replacement = session.snapshotEvents()[entry.replacementSeq]! as SurfaceEvent
     expect(original).toMatchObject({
       type: 'tool/result',
       data: {
@@ -202,12 +207,13 @@ describe('ToolResultPruner session transaction', () => {
         isError: true,
         message: {
           source: { kind: 'tool', callId: ToolCallId('one') },
+          content: [{ type: 'tool-result', isError: true }],
         },
         error: { name: 'ExitError', code: 'EXIT_1' },
         meta: { diff: ['a', 'b'] },
         futureField: { nested: true },
       },
-      surfaceOp: { op: 'replace', start: originalSeq, end: originalSeq },
+      surfaceOp: { op: 'replace', startSeq: originalSeq, endSeq: originalSeq },
       sourceEventSeqs: [originalSeq],
     })
     expect(session.surface.nodes).not.toContain(originalSeq)
@@ -215,7 +221,7 @@ describe('ToolResultPruner session transaction', () => {
     // Shadow-price protocol: the metering event sits directly before the
     // replacement and prices the shadowed node with the shared estimator.
     if (original.type !== 'tool/result') throw new Error('original is not a tool/result')
-    expect(session.events[entry.replacementSeq - 1]).toMatchObject({
+    expect(session.snapshotEvents()[entry.replacementSeq - 1]).toMatchObject({
       type: 'compaction/prune',
       data: {
         shadowedRange: { start: originalSeq, end: originalSeq },
@@ -250,7 +256,7 @@ describe('ToolResultPruner session transaction', () => {
       turn: 2,
     })
     service().pruneSession(session)
-    const replay = Session.create(session.id, [...session.events])
+    const replay = Session.create(session.id, session.snapshotEvents())
     expect(replay.deriveMessages()).toEqual(session.deriveMessages())
     expect(replay.surface.replaceGeneration).toBe(session.surface.replaceGeneration)
   })
@@ -258,6 +264,7 @@ describe('ToolResultPruner session transaction', () => {
   it('runs under real invariants between closed steps but not outside a turn', async () => {
     const ctx = new Context()
     await ctx.plugin(SessionStore)
+    await ctx.plugin(SessionProjectionRegistry)
     await ctx.plugin(InvariantRegistry)
     await ctx.plugin(SessionInvariant)
     await ctx.plugin(TokenMeter)

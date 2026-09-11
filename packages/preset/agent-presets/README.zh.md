@@ -9,7 +9,7 @@ kind: "package-reference"
 
 ## 概述
 
-`dsh-agent-presets` 让每个 agent（智能体）会话都从同一个 preset 组装：preset 是一个目录，内含一份 `agent.cordis.yml`，列出该会话运行的插件。命名某个 preset 的会话会获得该 preset 的工具、提示词段落与 skill（技能），而其他会话各自保持自己的，因此一个进程可以同时运行多个组装方式不同的 agent。本包维护 preset 名单：它列出已配置根目录提供的每个 preset——随附的与你自己放在 `<dshHome>/.agent-presets` 下的——在 preset 无法启动会话时给出原因，并允许你通过复制既有 preset 来创建新 preset。默认 preset 是一项可按部署或按用户覆盖的设置，会话只有在尚未产出任何内容时才能切换 preset。preset 的权限恰好等于它所引用插件的权限，因此你创作的 preset 与 shell 访问权限同级。
+使用 `dsh-agent-presets` 为每个会话提供某个 preset 的 `agent.cordis.yml` 所指定的工具、提示词段落与 skill（技能）。一个进程可以运行使用不同 preset 的会话，同时保持它们的状态相互隔离。preset 名单合并随附定义、已配置根目录与用户根目录，会报告 preset 无法启动的原因，也能通过复制现有 preset 创建本地 preset。部署与用户都可选择默认值；只有空会话可以切换 preset。请将每个自行编写的 preset 视为受信任配置，因为它会授予其所选插件的能力。
 
 ## 目录
 
@@ -26,6 +26,8 @@ kind: "package-reference"
 ## 使用本包
 
 在需要让每个 agent 会话从 preset 文件获得自己的工具、提示词段落与 skill 的组装中挂载本包。每个会话都会命名一个 preset——显式指定或通过配置的默认值——并据此组装；没有本包时，会话只能回退到宿主组装挂载的内容。
+
+随附 Web 的 `standard`、`ptc` 与 `cordis` preset 包含[显式文件交付](../../client/ui-deliverables/README.zh.md#explicit-deliveries)。`minimal` preset 保留固定的双工具训练配置。
 
 ### preset 给会话带来什么
 
@@ -105,6 +107,7 @@ agent-presets:
 |---|---|
 | [`src/index.ts`](src/index.ts) | 服务入口：`Config` schema、settings 命名空间、名单 API、常驻挂载协调 |
 | [`src/discovery.ts`](src/discovery.ts) | 文件系统发现：根目录扫描、健康检查、id 校验、排序 |
+| [`src/composition-inventory.ts`](src/composition-inventory.ts) | 面向插件清单表面的压平组合行：文件读取（求值 disabled 门）与挂载读取（携带 fiber 状态） |
 | [`src/preset.ts`](src/preset.ts) | 词汇体系：preset id 规则、`AgentPreset` 与 `PresetRoot`、错误类型 |
 | [`src/mount.ts`](src/mount.ts) | 子树挂载、宿主 base-URL 处理、挂载审计、`write()` 抑制 |
 | [`src/authoring.ts`](src/authoring.ts) | 本地创作 preset 的复制/删除/读取、权限收紧 |
@@ -116,6 +119,10 @@ agent-presets:
 ### 常驻挂载
 
 `ensureStanding` 为每个 preset id 保留一个进行中的 promise（single-flight），因此两个竞争首次使用同一 preset 的 agent 共享一份组装。已结算的失败会被移除，以便后续会话重试文件已被修复的 preset。挂载运行在 roster 服务自己的未追踪上下文中——从被追踪上下文派生的子树会经调用方的 shadow fiber 解析服务——因此它比任何 agent 都活得久，只随整棵树卸载。`serviceForAgent` 读取某 agent 对其 preset 挂在 `isolate` realm 之后（组外不可见）的某个服务实例。
+
+### 组合清单
+
+`compositionInventory()` 向插件清单表面提供每个预设的压平行及其名单身份（id、trust、显示名、默认标记）：已有存活 standing mount 的预设由其最新世代的 Loader 条目作答——匹配限定在本运行时自己的 root 内，同进程里的第二个 Cordis 运行时不会替它作答；即使文件事后损坏也照常作答，因为挂载才是会话实际运行的组合，broken 裁决只适用于无人组合的预设——开机以来从未被组合的预设由其组合文件作答，`!!js` disabled 门用 Loader 上下文求值，使两种答案反映同一台宿主。读取从不挂载预设——列出所有组合的设置页不会激活其中任何一个。求值器拒绝的门保持 `'conditional'`；在发现的健康裁决与行读取之间变得不可读的文件，会携带竞态原因报告为 broken，而不是被静默丢弃。`./display` 子路径导出 `presetDisplayText` 纯函数，把内置预设 id 映射到各自的字典文案键；它没有任何 import，浏览器包直接内联，也是「哪个内置 id 对应哪份文案」的唯一归属地。
 
 ### 挂载审计
 
@@ -144,7 +151,6 @@ agent-presets:
 - [会话包映射](../../session/README.zh.md)——preset 切换所追加的持久会话记录。
 - [生成的配置目录](../../../docs/config-catalog.zh.md#deepseek-aidsh-agent-presets)——每个受支持配置字段及其源声明。
 - [按会话组装 agent preset 的 Agent Note](../../../.agents/notes/implemented/architecture/2026-08-03-per-session-agent-presets.zh.md)——设计理由与备选方案。
-- [按 preset 常驻挂载的 Agent Note](../../../.agents/notes/implemented/architecture/2026-08-08-per-preset-standing-mounts.zh.md)——挂载为何是常驻且共享的。
 
 -----
 

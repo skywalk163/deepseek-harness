@@ -9,7 +9,7 @@ kind: "package-reference"
 
 ## 概述
 
-`dsh-goal` 为每个 agent 会话保留一个持久的完成目标：目标的文本、phase、Round 数量与 revision 历史都保存在会话日志中，因此会话 resume（恢复）、fork 与进程重启后依然存在。你可以 create、edit、pause、resume、complete、block 和 clear 一个 goal，且每次变更都是比较并设置，陈旧的视图不会覆盖更新的状态。goal 带有 Round 上限（默认 256）以约束自动续行，被阻塞的 goal 会保留稳定的策略代码和面向人的说明。它是状态而非调度器：服务不决定工作何时继续，续行权限是进程本地的且绝不持久化。当单个长期目标需要横跨多轮时选择它；常规单轮工作不要使用。
+`dsh-goal` 让一个长期完成目标在多轮、会话 resume（恢复）、fork 与进程重启后持续存在。用户与 agent 可以 create、edit、pause、resume、complete、block 或 clear 该目标；比较并设置的更新会拒绝陈旧视图。可配置的 Round 上限（默认 256）约束自动续行，被阻塞的 goal 会保留稳定的策略代码和面向人的说明。本包存储 goal 状态但不调度工作，续行权限是进程本地的而非持久状态。单个目标需要横跨多轮时选择本包；常规单轮工作或并行目标不要使用。
 
 ## 目录
 
@@ -46,6 +46,10 @@ goal 适合一个需要跨自动 Goal Round 持续的长期完成目标——例
 | `defaultMaxGoalRounds` | `256` | 当 create 请求省略上限时应用的 Round 上限 |
 
 `defaultMaxGoalRounds` 必须是正的安全整数；指定了自身上限的 create 请求会覆盖它。生成的[配置目录](../../../docs/config-catalog.zh.md#deepseek-aidsh-goal)是每个受支持字段的穷尽式真源。
+
+### 会话投影
+
+`GoalService` 要求组合提供 `ctx.sessionProjections`（[`@deepseek-ai/dsh-session-projection`](../../session/session-projection/README.zh.md)），并在启动时注册 `goal` 投影单元；未组合投影注册表的组合无法激活 `ctx.goals`。该单元版本为 6，其宿主状态保留最新的有效当前 goal、所有曾使用的 goal id，以及第一次严格回放失败。客户端 view 提供当前 goal；首次 create 前与 clear tombstone 后为 `null`。该 key 同时合并到 `SessionProjectionStateMap` 与 `SessionProjectionMap`；载体通过历史尾页和 `session/projection` 推送帧提供客户端值。
 
 ### 驱动生命周期
 
@@ -94,7 +98,7 @@ view.activation                        // 'armed' | 'disarmed' — not persisted
 - **比较并设置的变更。** `ctx.goals` 只接受以对应 id 注册的完全相同的活跃 `Agent` 实例。`get()` 返回脱离状态的 `GoalView`；变更携带 `GoalRef { id, revision }` 并拒绝陈旧引用。创建在提交前于内部解析部署默认值。
 - **续行启用状态是进程本地的。** `armed` 与 `disarmed` 保存在每会话缓存中，绝不持久化。新缓存与每次 `agent/session-start` 边界都会停用续行，即使回放发现持久 phase 为 active；`disarm()` 移除续行权限，不写入 revision 也不发出变更事件。
 - **严格回放。** 折叠只从 `goal/change` 派生生命周期变更，并拒绝形状错误、不连续 revision、非法 phase 转换、每目标时间戳非单调，以及不连续的已准入 Round。只有已准入的来源为 goal 的 `user/message` 事件会推进正数 Round；挂钟时间倒退时，变更时间戳会限制在不早于上一次更新的值。
-- **投影单元。** 本包注册一个 last-wins 的 `goal` 投影（完整当前 goal，或 `null`），仅当组合了投影注册表时才激活。
+- **投影单元。** 本包要求提供投影注册表，并注册一个严格的 `goal` 单元。其宿主状态保留回放校验数据与第一次失败，客户端 view 提供最新有效的完整 goal 或 `null`；保留回放失败后，`GoalService` 会拒绝访问。
 
 ### 源码地图
 
@@ -102,14 +106,14 @@ view.activation                        // 'armed' | 'disarmed' — not persisted
 |---|---|
 | [`src/index.ts`](src/index.ts) | 插件入口：`GoalService`、config schema、变更、续行启用缓存、投影单元 |
 | [`src/domain.ts`](src/domain.ts) | 持久变更载荷、`goal/changed` 事件、goal 消息来源归属 |
-| [`src/types.ts`](src/types.ts) | 纯客户端安全类型：`GoalView`、`GoalSnapshot`、投影键声明 |
+| [`src/types.ts`](src/types.ts) | 纯客户端安全类型：`GoalView`、`GoalSnapshot`、`GoalActivationChanged`、投影键声明 |
 | [`src/fold.ts`](src/fold.ts) | 持久 goal 变更的严格回放折叠与解码器 |
 | [`src/runtime.ts`](src/runtime.ts) | `GoalId` 品牌、`GoalError` 代码、变更版本常量 |
 | [`src/invariant.ts`](src/invariant.ts) | 不变式伴生：对每个已挂接会话的独立增量折叠 |
 
 ### 事件与归属
 
-`goal/changed` 在持久事件提交后触发，监听器失败会被隔离；载荷携带操作、精确 ref 与最新视图（clear tombstone 时省略）。已准入的续行 Round 通过 `user/message` 事件上的 `GoalMessageSource { goalId, revision, round }` 归属，严格折叠会将其验证为当前 goal 的下一个已准入 Round。
+`goal/changed` 在持久事件提交后触发，监听器失败会被隔离；载荷携带操作、精确 ref 与最新视图（clear tombstone 时省略）。`goal/activation-changed` 在不改变持久状态的情况下，转发携带精确当前 ref 的进程本地 `armed`／`disarmed` 边界；clear 后则不携带 goal。已准入的续行 Round 通过 `user/message` 事件上的 `GoalMessageSource { goalId, revision, round }` 归属，严格折叠会将其验证为当前 goal 的下一个已准入 Round。
 
 </details>
 

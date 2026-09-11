@@ -26,6 +26,7 @@ const requiredArtifacts = [
   'packages/api/gateway/lib/index.js',
   'packages/typert/registry/lib/client.js',
   'packages/typert/registry/lib/index.js',
+  'packages/session/session-projection/lib/index.js',
 ].every(path => existsSync(artifact(path)))
 
 describe.skipIf(!requiredArtifacts)('Goal Remote built LIB chain', () => {
@@ -42,10 +43,12 @@ describe.skipIf(!requiredArtifacts)('Goal Remote built LIB chain', () => {
       registryHost: 'packages/typert/registry/lib/index.js',
       remotesClient: 'packages/api/remotes/lib/client.js',
       session: 'packages/core/session/lib/index.js',
+      sessionProjections: 'packages/session/session-projection/lib/index.js',
     }).map(([key, path]) => [key, artifactUrl(path)]))
     const script = `
       import { createServer } from 'node:http'
       import * as cordis from '@deepseek-ai/cordis'
+      import * as zod from 'zod'
 
       const urls = ${JSON.stringify(urls)}
       const { Context } = cordis
@@ -53,6 +56,7 @@ describe.skipIf(!requiredArtifacts)('Goal Remote built LIB chain', () => {
       const connectionHost = await import(urls.connectionHost)
       const { default: TypertRemoteService } = await import(urls.apiGatewayHost)
       const { default: GoalService } = await import(urls.goal)
+      const { default: SessionProjectionRegistry } = await import(urls.sessionProjections)
       const { TYPERT } = await import(urls.goalTypert)
       const { default: TypertRegistry } = await import(urls.registryHost)
       const { Session, SessionId } = await import(urls.session)
@@ -81,6 +85,7 @@ describe.skipIf(!requiredArtifacts)('Goal Remote built LIB chain', () => {
       await host.plugin(TypertRegistry)
       await host.plugin(AgentRegistry)
       await host.plugin(TypertRemoteService)
+      await host.plugin(SessionProjectionRegistry)
       await host.plugin(GoalService)
       host.typert.register(TYPERT)
 
@@ -153,6 +158,7 @@ describe.skipIf(!requiredArtifacts)('Goal Remote built LIB chain', () => {
         if (handoff === undefined) throw new Error('missing Client bundle handoff ' + id)
         return handoff.factory(specifier => {
           if (specifier === '@deepseek-ai/cordis') return cordis
+          if (specifier === 'zod') return zod
           throw new Error('unexpected Client external ' + specifier)
         })
       }
@@ -193,8 +199,8 @@ describe.skipIf(!requiredArtifacts)('Goal Remote built LIB chain', () => {
         scopedResult: scopedResult.value,
         rootGoal: host.goals.get(rootAgent)?.objective,
         scopedGoal: host.goals.get(scopedAgent)?.objective,
-        rootEvents: rootAgent.session.events.length,
-        scopedEvents: scopedAgent.session.events.length,
+        rootEvents: rootAgent.session.snapshotEvents().length,
+        scopedEvents: scopedAgent.session.snapshotEvents().length,
       }
 
       await client.fiber.dispose()
