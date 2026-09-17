@@ -151,6 +151,13 @@ async function openNativePathWithIntent(
     return
   }
 
+  if (platform === 'freebsd') {
+    // FreeBSD has no platform-specific opener; xdg-open (from xdg-utils) reaches
+    // the desktop when one is installed, exactly as on Linux.
+    await run('xdg-open', [path], signal)
+    return
+  }
+
   throw new Error(`native path opener is unsupported on ${platform}`)
 }
 
@@ -168,7 +175,9 @@ async function openNativePathWithIntent(
 export function canOpenNativePath(internals: PathOpenerInternals = {}): boolean {
   const platform = internals.platform ?? process.platform
   if (platform === 'darwin' || platform === 'win32') return true
-  if (platform !== 'linux') return false
+  // Linux and FreeBSD reach a desktop only through a display server; WSL
+  // (Linux only) instead reaches the Windows desktop.
+  if (platform !== 'linux' && platform !== 'freebsd') return false
   const env = internals.env ?? process.env
   return isWsl(internals) || present(env.DISPLAY) || present(env.WAYLAND_DISPLAY)
 }
@@ -215,7 +224,7 @@ export function nativeFileManager(internals: PathOpenerInternals = {}): NativeFi
   const platform = internals.platform ?? process.platform
   if (platform === 'darwin') return 'finder'
   if (platform === 'win32' || (platform === 'linux' && isWsl(internals))) return 'explorer'
-  return platform === 'linux' ? 'directory' : null
+  return (platform === 'linux' || platform === 'freebsd') ? 'directory' : null
 }
 
 /**

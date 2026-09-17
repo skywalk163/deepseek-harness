@@ -205,6 +205,9 @@ export class SettingsController extends TypertRemoteService {
     if (path === undefined) {
       throw new RemoteError('gateway/internal', 'settings provider has no local document to open', {})
     }
+    // A headless serving host (no display server) cannot delegate to a desktop
+    // opener; hand the path back so the UI can show it instead of erroring.
+    if (!this.canOpenPath()) return { opened: false, path }
     if (isAborted(signal)) throw new RemoteError('gateway/cancelled', 'settings document open was aborted', {})
     try {
       await this.openTextFile(path, signal)

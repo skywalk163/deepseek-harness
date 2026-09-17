@@ -14,13 +14,15 @@ export interface SettingsDocumentState {
   opening: boolean
   /** Last metadata/native-open diagnostic; UI exposes only localized copy. */
   error: string | null
+  /** Resolved document path when the Host cannot open it natively (headless server). */
+  path: string | null
 }
 
 /** Derives local-document availability from the shared mirror and invokes the pathless Host-owned open operation. */
 export class SettingsDocumentStore {
   /** uSES-safe state source shared by the registered header action. */
   readonly store: SnapshotStore<SettingsDocumentState> = createSnapshotStore({
-    status: 'idle', opening: false, error: null,
+    status: 'idle', opening: false, error: null, path: null,
   })
 
   private following: (() => void) | undefined
@@ -60,12 +62,19 @@ export class SettingsDocumentStore {
     this.store.update((state) => {
       state.opening = true
       state.error = null
+      state.path = null
     })
     try {
       const result = await this.ctx.remote.settings.openSettingsDocument()
       if (!result.ok) {
         const { message } = result.error
         this.store.update((state) => { state.error = message })
+        return
+      }
+      // A headless serving Host returns the path instead of opening it natively.
+      const value = result.value as { readonly opened: boolean; readonly path?: string }
+      if (!value.opened && value.path !== undefined) {
+        this.store.update((state) => { state.path = value.path ?? null })
       }
     } finally {
       this.store.update((state) => { state.opening = false })

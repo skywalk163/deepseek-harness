@@ -245,7 +245,7 @@ describe('the settings Remote namespace a configuration page calls', () => {
     await ctx.plugin(DocumentSettings)
     const prepare = vi.spyOn(ctx.settings, 'prepareDocument').mockResolvedValue('/tmp/settings.yaml')
     const openTextFile = vi.fn((_path: string, _signal: AbortSignal) => Promise.resolve())
-    const controller = new SettingsController(ctx, {}, { openTextFile })
+    const controller = new SettingsController(ctx, { nativeOpen: true }, { openTextFile })
     const signal = new AbortController().signal
 
     await expect(controller.openSettingsDocument(signal)).resolves.toEqual({ opened: true })
@@ -280,7 +280,7 @@ describe('the settings Remote namespace a configuration page calls', () => {
     const prepared = Promise.withResolvers<string | undefined>()
     vi.spyOn(ctx.settings, 'prepareDocument').mockReturnValue(prepared.promise)
     const openTextFile = vi.fn((_path: string, _signal: AbortSignal) => Promise.resolve())
-    const controller = new SettingsController(ctx, {}, { openTextFile })
+    const controller = new SettingsController(ctx, { nativeOpen: true }, { openTextFile })
     const abort = new AbortController()
 
     const opening = controller.openSettingsDocument(abort.signal)
@@ -295,7 +295,7 @@ describe('the settings Remote namespace a configuration page calls', () => {
     const ctx = new Context()
     await ctx.plugin(DocumentSettings)
     vi.spyOn(ctx.settings, 'prepareDocument').mockResolvedValue('/tmp/settings.yaml')
-    const controller = new SettingsController(ctx, {}, {
+    const controller = new SettingsController(ctx, { nativeOpen: true }, {
       openTextFile: () => Promise.reject(new Error('no default editor')),
     })
 
@@ -319,7 +319,7 @@ describe('the settings Remote namespace a configuration page calls', () => {
     await opening.plugin(DocumentSettings)
     vi.spyOn(opening.settings, 'prepareDocument').mockResolvedValue('/tmp/settings.yaml')
     const openAbort = new AbortController()
-    const openingController = new SettingsController(opening, {}, {
+    const openingController = new SettingsController(opening, { nativeOpen: true }, {
       openTextFile: async () => {
         openAbort.abort(new Error('cancelled'))
         throw new Error('opening stopped')

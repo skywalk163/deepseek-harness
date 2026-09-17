@@ -117,9 +117,21 @@ describe('native path opener', () => {
     expect(run).toHaveBeenCalledWith('xdg-open', ['/tmp/a.txt'], expect.any(AbortSignal))
   })
 
-  it('rejects unsupported platforms', async () => {
-    await expect(openNativePath('/x', signal(), { platform: 'freebsd' as NodeJS.Platform }))
-      .rejects.toThrow('unsupported on freebsd')
+  it('opens with FreeBSD xdg-open', async () => {
+    const run = vi.fn<PathOpenerRunner>(async () => ({ stdout: '', stderr: '' }))
+    await openNativePath('/tmp/settings.yaml', signal(), { platform: 'freebsd', env: {}, run })
+    expect(run).toHaveBeenCalledWith('xdg-open', ['/tmp/settings.yaml'], expect.any(AbortSignal))
+  })
+
+  it('opens a text document with FreeBSD xdg-open', async () => {
+    const run = vi.fn<PathOpenerRunner>(async () => ({ stdout: '', stderr: '' }))
+    await openNativeTextFile('/tmp/settings.yaml', signal(), { platform: 'freebsd', env: {}, run })
+    expect(run).toHaveBeenCalledWith('xdg-open', ['/tmp/settings.yaml'], expect.any(AbortSignal))
+  })
+
+  it('rejects other unsupported platforms', async () => {
+    await expect(openNativePath('/x', signal(), { platform: 'sunos' as NodeJS.Platform }))
+      .rejects.toThrow('unsupported on sunos')
   })
 
   it('uses the current process platform when no platform override is supplied', async () => {
@@ -129,7 +141,7 @@ describe('native path opener', () => {
     })
     const expected = process.platform === 'win32'
       ? 'powershell.exe'
-      : process.platform === 'linux'
+      : process.platform === 'linux' || process.platform === 'freebsd'
         ? 'xdg-open'
         : 'open'
     expect(run.mock.calls[0]?.[0]).toBe(expected)
@@ -333,6 +345,7 @@ describe('native file manager', () => {
     ['darwin', 'finder', '/tmp/my report.txt', 'open', ['-R', '/tmp/my report.txt']],
     ['win32', 'explorer', 'C:\\work\\my report.txt', 'explorer.exe', ['/select,', 'file:///C:/work/my%20report.txt']],
     ['linux', 'directory', '/tmp/a $b; report.txt', 'xdg-open', ['/tmp']],
+    ['freebsd', 'directory', '/tmp/a $b; report.txt', 'xdg-open', ['/tmp']],
   ] as const)('reveals through %s without opening the file association', async (platform, manager, path, command, args) => {
     const run = vi.fn<PathOpenerRunner>(async () => ({ stdout: '', stderr: '' }))
     const internals = { platform, env: {}, osRelease: 'generic', run }
