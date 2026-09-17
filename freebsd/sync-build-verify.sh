@@ -71,10 +71,12 @@ say "LOG   = $LOG"
 say "--- swap / 内存（1.5 是共享生产机，先看这眼）---"
 swapinfo -h 2>/dev/null | head -3 || true
 
-DIRTY=$(git status --porcelain)
+DIRTY=$(git status --porcelain --untracked-files=no)
 if [ -n "$DIRTY" ]; then
-  say "!! 工作区不干净 —— 构建结果可能不可信:"
+  say "!! 工作区有未提交改动 —— 构建结果可能不可信:"
   printf '%s\n' "$DIRTY" | head -20
+else
+  say "工作区干净（仅跟踪文件；dsh_web.log / dsh_web.pid 等运行时文件不算）"
 fi
 
 step "pnpm-install" pnpm install || { say "RESULT: FAILED(install)"; exit 1; }
