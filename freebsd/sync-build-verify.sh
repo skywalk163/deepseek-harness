@@ -18,6 +18,8 @@
 #   * clean 后首次 build:lib 在 1.5(8GB) 上可能 OOM(exit 137)
 #     -> 自动重跑一次，走 tsbuildinfo 增量续编
 #   * 原生 flock 插件每台机器各自编译（packages/*/bin/ 不入库）
+#   * flock 行为测试的 C 预言机同样每台机器各自编译（native/system/test/bin/ 被 gitignore），
+#     上游没有任何自动化会调用 `build:test-oracle` —— 本脚本显式跑它
 # ---------------------------------------------------------------------------
 set -u
 
@@ -82,6 +84,11 @@ fi
 step "pnpm-install" pnpm install || { say "RESULT: FAILED(install)"; exit 1; }
 step "clean" pnpm run clean || { say "RESULT: FAILED(clean)"; exit 1; }
 step "native-system" pnpm run build:native-system || { say "RESULT: FAILED(native-system)"; exit 1; }
+# flock 行为测试依赖一个独立编译的 POSIX C 预言机
+# (`native/system/test/bin/flock-oracle`，被 .gitignore 忽略 → 每台机器各自编译)。
+# 上游只提供 `build:test-oracle` 脚本，**没有任何东西自动调用它**；忘了编译就会让
+# 4 个 C 互操作用例以 ENOENT 失败（2026-09-17 在 0.88 上踩到，1.5 只是碰巧手工编过）。
+step "test-oracle" pnpm --dir native/system build:test-oracle || { say "RESULT: FAILED(test-oracle)"; exit 1; }
 
 if ! step "build-lib#1" pnpm run build:lib; then
   say "!! build:lib 第 1 次失败 —— 1.5 上多为 post-clean tsc OOM(exit 137)，重跑一次走增量续编"
