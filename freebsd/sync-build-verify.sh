@@ -99,7 +99,13 @@ step "native-tests" pnpm --dir native/system test
 stepsh "verify-sandbox" 'node freebsd/verify-sandbox.mjs'
 step "translation-pairing" pnpm run verify-translation-pairing
 
+# 定向 vitest（~11s）。本脚本原先完全不跑 vitest，于是「fork 故意改了行为 ↔ 上游测试
+# 假设没改」这类冲突会一直潜伏：构建全绿，`pnpm test` 却早就坏了。2026-09-17 同步
+# 0.1.6-alpha.1 时一次跑出 8 个必红（见技能 §7 表）。只跑 fork 动过行为的两个包。
+step "vitest-scoped" pnpm exec vitest run packages/fs/tool-fs-search packages/sandbox/sandbox-local
+
 say "===== SUMMARY ====="
 grep -E '^EXIT |^RESULT:|^PASS=|^FAIL=|^clean: removed' "$LOG" 2>/dev/null || true
 say "完整日志: $LOG"
 say "RESULT: OK —— 别忘了重启服务并做冒烟（401/303、SANDBOX_UNAVAILABLE=0、发一条消息跑通一轮）"
+say "           上面 SUMMARY 里的 EXIT 也要全 0：native-tests / verify-sandbox(10/10) / translation-pairing / vitest-scoped"
