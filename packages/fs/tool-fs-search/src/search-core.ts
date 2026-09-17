@@ -177,34 +177,48 @@ function completeStdout(toolName: string, stdout: SubprocessOutputRead, rawOutpu
  * @returns the chosen binary's absolute path; the promise rejects
  *   when no platform package can be resolved and none of the fallbacks exist.
  */
-let rgPathPromise: Promise<string> | undefined
-
 export function resolveRgPath(): Promise<string> {
-  if (rgPathPromise === undefined) {
-    rgPathPromise = (async () => {
-    const override = process.env.DSH_RIPGREP_PATH
-    if (override !== undefined && existsSync(override)) return override
-    const executable = parse(process.execPath)
-    const executableSidecar = process.platform === 'win32'
-      ? join(executable.dir, `${executable.name}-rg.exe`)
-      : `${process.execPath}-rg`
-    if ('pkg' in process && existsSync(executableSidecar)) return executableSidecar
-    try {
-      const packaged = (await import('@vscode/ripgrep')).rgPath
-      if (packaged !== undefined && existsSync(packaged)) return packaged
-    } catch {
-      // No platform package (e.g. FreeBSD) — fall through to a system binary.
-    }
-    try {
-      const onPath = execSync('command -v rg || which rg', { encoding: 'utf-8' }).trim()
-      if (onPath.length > 0) return onPath
-    } catch {
-      // No system rg on PATH.
-    }
-    return (await import('@vscode/ripgrep')).rgPath
-  })()
+  return resolveRgPathUncached()
+}
+
+/**
+ * Resolve the ripgrep binary for this call. Deliberately NOT memoized (upstream
+ * caches the first resolution): on FreeBSD `@vscode/ripgrep` ships no binary, so
+ * the usable binary is whatever `rg` the operator installed — `pkg install
+ * ripgrep` is then picked up by the very next search, with no harness restart.
+ */
+async function resolveRgPathUncached(): Promise<string> {
+  const override = process.env.DSH_RIPGREP_PATH
+  if (override !== undefined && existsSync(override)) return override
+  const executable = parse(process.execPath)
+  const executableSidecar = process.platform === 'win32'
+    ? join(executable.dir, `${executable.name}-rg.exe`)
+    : `${process.execPath}-rg`
+  if ('pkg' in process && existsSync(executableSidecar)) return executableSidecar
+  let packaged: string | undefined
+  try {
+    packaged = await resolvePackagedRgPath()
+  } catch {
+    // No platform package for this platform (FreeBSD ships none) — fall through
+    // to a system binary.
   }
-  return rgPathPromise as Promise<string>
+  if (packaged !== undefined && existsSync(packaged)) return packaged
+  try {
+    const onPath = execSync('command -v rg || which rg', { encoding: 'utf-8' }).trim()
+    if (onPath.length > 0) return onPath
+  } catch {
+    // No system rg on PATH.
+  }
+  if (packaged !== undefined) return packaged
+  return resolvePackagedRgPath()
+}
+
+/** The `@vscode/ripgrep` platform binary, with upstream's Electron asar rewrite. */
+async function resolvePackagedRgPath(): Promise<string> {
+  const dependency = (await import('@vscode/ripgrep')).rgPath
+  return process.versions.electron === undefined
+    ? dependency
+    : dependency.replace(/\.asar(?=[\\/])/u, '.asar.unpacked')
 }
 
 /**
