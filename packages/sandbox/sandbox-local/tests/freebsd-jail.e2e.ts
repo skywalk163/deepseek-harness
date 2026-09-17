@@ -46,8 +46,8 @@ async function provider(): Promise<LocalSandboxProvider> {
 }
 
 /** Confine a shell command under `policy` and run it for real; returns the spawn result and the wrap's facts. */
-function runConfined(sandbox: LocalSandboxProvider, command: string, policy: SandboxPolicy) {
-  const confined = sandbox.confine(['bash', '-c', command], policy)
+async function runConfined(sandbox: LocalSandboxProvider, command: string, policy: SandboxPolicy) {
+  const confined = await sandbox.confine(['bash', '-c', command], policy)
   const result = spawnSync(confined.argv[0] as string, confined.argv.slice(1), { timeout: 30_000, encoding: 'utf8' })
   return { result, confined }
 }
@@ -56,7 +56,7 @@ describe.skipIf(!freebsdJailUsable)('sandbox-local: real FreeBSD jail confinemen
   it('selects the freebsd-jail rung — full enforcement, EROFS dialect', async () => {
     const workdir = await tempDir(tmpdir())
     const sandbox = await provider()
-    const confined = sandbox.confine(['true'], { mode: 'read-only', workspaceRoot: workdir })
+    const confined = await sandbox.confine(['true'], { mode: 'read-only', workspaceRoot: workdir })
     expect(confined.argv[0]).toBe(jailBin)
     expect(confined.argv).toContain('--workspace')
     expect(confined.argv).toContain(workdir)
@@ -69,7 +69,7 @@ describe.skipIf(!freebsdJailUsable)('sandbox-local: real FreeBSD jail confinemen
   it('read-only denies a write — the file must NOT exist, and the kernel speaks the advertised dialect', async () => {
     const workdir = await tempDir(tmpdir())
     const sandbox = await provider()
-    const { result } = runConfined(sandbox, 'echo hi > /workspace/denied.txt', { mode: 'read-only', workspaceRoot: workdir })
+    const { result } = await runConfined(sandbox, 'echo hi > /workspace/denied.txt', { mode: 'read-only', workspaceRoot: workdir })
     expect(result.status).not.toBe(0)
     // The wrap's denialSignatures must be what the kernel actually prints.
     expect(result.stderr.toLowerCase()).toContain('read-only file system')
@@ -79,7 +79,7 @@ describe.skipIf(!freebsdJailUsable)('sandbox-local: real FreeBSD jail confinemen
   it('read-only keeps the tree readable/executable and the fresh /dev/null writable', async () => {
     const workdir = await tempDir(tmpdir())
     const sandbox = await provider()
-    const { result } = runConfined(sandbox, 'ls /bin > /dev/null && test -x /bin/sh && echo dev-ok', { mode: 'read-only', workspaceRoot: workdir })
+    const { result } = await runConfined(sandbox, 'ls /bin > /dev/null && test -x /bin/sh && echo dev-ok', { mode: 'read-only', workspaceRoot: workdir })
     expect(result.status).toBe(0)
     expect(result.stdout).toBe('dev-ok\n')
   })
@@ -88,11 +88,11 @@ describe.skipIf(!freebsdJailUsable)('sandbox-local: real FreeBSD jail confinemen
     const workdir = await tempDir(homedir())
     const sandbox = await provider()
 
-    const inside = runConfined(sandbox, 'printf jail-ok > /workspace/allowed.txt', { mode: 'workspace-write', workspaceRoot: workdir })
+    const inside = await runConfined(sandbox, 'printf jail-ok > /workspace/allowed.txt', { mode: 'workspace-write', workspaceRoot: workdir })
     expect(inside.result.status).toBe(0)
     expect(readFileSync(join(workdir, 'allowed.txt'), 'utf8')).toBe('jail-ok')
 
-    const denied = runConfined(sandbox, 'echo hi > /etc/denied.txt', { mode: 'workspace-write', workspaceRoot: workdir })
+    const denied = await runConfined(sandbox, 'echo hi > /etc/denied.txt', { mode: 'workspace-write', workspaceRoot: workdir })
     expect(denied.result.status).not.toBe(0)
     // /etc is a read-only nullfs mount, so the kernel denies with EROFS — the
     // harness's advertised denial dialect for this backend.
@@ -106,7 +106,7 @@ describe.skipIf(!freebsdJailUsable)('sandbox-local: real FreeBSD jail confinemen
     const target = `/tmp/dsh-freebsd-e2e-ephemeral-${process.pid}.txt`
     tempFiles.push(target)
     const sandbox = await provider()
-    const { result } = runConfined(sandbox, `printf tmp-ok > ${target} && cat ${target}`, { mode: 'workspace-write', workspaceRoot: workdir })
+    const { result } = await runConfined(sandbox, `printf tmp-ok > ${target} && cat ${target}`, { mode: 'workspace-write', workspaceRoot: workdir })
     expect(result.status).toBe(0)
     expect(result.stdout).toBe('tmp-ok')
     expect(existsSync(target)).toBe(false)

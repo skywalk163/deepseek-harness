@@ -20,7 +20,6 @@ import ToolRuntime, { TOOL_ABORTED_BEFORE_DISPATCH, type ToolExecution, type Too
 import { SubprocessRuntime } from '@deepseek-ai/dsh-subprocess'
 import type { SubprocessCollectedOutputs, SubprocessHandle, SubprocessOutcome, SubprocessOutputRead, SubprocessOutputReader, SubprocessSpawnSpec } from '@deepseek-ai/dsh-subprocess'
 import { MAX_TIMER_DELAY_MS } from '@deepseek-ai/dsh-timeout'
-import { rgPath } from '@vscode/ripgrep'
 import { SpillLocator, SpillStore } from '@deepseek-ai/dsh-spill'
 import type { SaveTextSpill, SpillRef } from '@deepseek-ai/dsh-spill'
 import * as ToolFsSearch from '@deepseek-ai/dsh-tool-fs-search'
@@ -41,6 +40,16 @@ import {
 } from '@deepseek-ai/dsh-tool-fs-search'
 
 const testToolSignal = new AbortController().signal
+
+/**
+ * FORK NOTE (FreeBSD port): `@vscode/ripgrep` has no `freebsd-x64`
+ * optionalDependency and THROWS at import there, which used to fail this whole
+ * file at collection. The port resolves ripgrep through the harness's own chain
+ * instead — the packaged path wherever it exists, a system `rg` on FreeBSD —
+ * which is exactly what the code under test calls, so the argv/identity
+ * assertions below stay meaningful on every platform.
+ */
+const rgPath = await import('@vscode/ripgrep').then(module => module.rgPath, () => resolveRgPath())
 
 /**
  * Normalize a POSIX-style test path to the platform separator: the sampler and
@@ -524,14 +533,18 @@ describe('workdir derivation and signal forwarding', () => {
     expect(text(result)).toContain('aborted before completion')
   })
 
-  it('resolves the packaged ripgrep path lazily, once per process', async () => {
+  it('resolves the ripgrep path lazily, at each call rather than once per process', async () => {
     // The module must not touch @vscode/ripgrep at load (a missing platform
-    // package would otherwise fail the whole composition), and repeated
-    // resolution reuses the first result. The resolution-failure path is
-    // pinned separately in rg-path.spec.ts.
+    // package would otherwise fail the whole composition). The resolution-
+    // failure path is pinned separately in rg-path.spec.ts.
+    //
+    // FORK NOTE (FreeBSD port): upstream reused the first promise for the whole
+    // process. The port deliberately resolves at each call instead, so a system
+    // `rg` installed after boot is picked up by the very next search without
+    // restarting the harness (see the contract on resolveRgPath).
     await setup()
     expect(await resolveRgPath()).toBe(rgPath)
-    expect(resolveRgPath()).toBe(resolveRgPath())
+    expect(resolveRgPath()).not.toBe(resolveRgPath())
   })
 
   it('rejects when the subprocess implementation drops a requested collect stream', async () => {

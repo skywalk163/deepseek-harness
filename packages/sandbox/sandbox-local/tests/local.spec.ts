@@ -223,7 +223,10 @@ describe('the platform chains', () => {
     const probeBwrap = vi.fn(() => true)
     const probeLandlock = vi.fn(() => 'full' as const)
     const probeSeatbelt = vi.fn(() => true)
-    const { sandbox } = await setup({}, { platform: 'freebsd', probeBwrap, probeLandlock, probeSeatbelt })
+    // FORK NOTE (FreeBSD port): this example used to be `freebsd`, but the port
+    // gives FreeBSD a real chain (freebsd-jail, see PLATFORM_CHAINS), so the
+    // chain-less example is now a platform the provider has no rung for at all.
+    const { sandbox } = await setup({}, { platform: 'openbsd', probeBwrap, probeLandlock, probeSeatbelt })
     await expect(sandbox.confine(['true'], RO)).rejects.toThrow(expect.objectContaining({ name: 'SandboxUnavailableError', code: SANDBOX_UNAVAILABLE }))
     expect(probeBwrap).not.toHaveBeenCalled()
     expect(probeLandlock).not.toHaveBeenCalled()
