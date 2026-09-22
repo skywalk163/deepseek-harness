@@ -1,6 +1,7 @@
 // Shared plumbing for the web smoke tests (dist location, free port, failure shots).
 import { existsSync, mkdirSync } from 'node:fs'
 import { createServer } from 'node:net'
+import { createRequire } from 'node:module'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { Browser, Locator, Page } from 'playwright'
@@ -10,12 +11,34 @@ export const DIST_INDEX = fileURLToPath(new URL('../dist/index.html', import.met
 
 export const REPO_ROOT = fileURLToPath(new URL('../../..', import.meta.url))
 
+const installationRequire = createRequire(join(REPO_ROOT, 'apps/cli/package.json'))
+
+/**
+ * The built copy of a workspace package, as the dsh installation resolves it.
+ * The Host plugins a scaffold profile loads run from built packages through
+ * Node's own loader; a scaffold call that must share their module state
+ * (app-boot keeps the root Include it mounted per context) has to run that
+ * same copy, not the source a bare import gets through the tsconfig paths,
+ * and not the test runner's own inlined copy of the built file either.
+ * `require` of an ES module goes through Node's loader and shares its
+ * module map with the plugins' imports; it needs a graph without top-level
+ * await, which the built Host packages keep.
+ * @param name - the workspace package name.
+ * @returns the package's built module namespace, for the caller to type as the package's own.
+ */
+export function requireBuilt(name: string): unknown {
+  return installationRequire(name)
+}
+
 /**
  * Browser language a page must advertise to boot into the product's Chinese
  * surface: with no stored preference the client derives its initial locale
  * from the browser, and Playwright's default browser asks for English.
  */
 export const ZH_BROWSER_LOCALE = 'zh-CN'
+
+/** Same-day anchor for seeded event times and the Asia/Shanghai browser clock. */
+export const WEB_FIXTURE_TIME = Date.parse('2026-01-15T12:00:00+08:00')
 
 /**
  * Open the standard browser-test page advertising English before client boot.
@@ -33,32 +56,37 @@ export async function newEnglishPage(browser: Browser, height = 1000): Promise<P
 }
 
 /**
- * Expand every currently eligible Turn-process group so a Tool-focused
+ * Expand every eligible Turn process and secondary group so a Tool-focused
  * scenario can exercise the original row contract beneath product-default
  * compact Chat presentation.
  * @param page - page containing the Chat view.
  */
 export async function expandTurnProcesses(page: Page): Promise<void> {
-  const controls = page.locator('[data-turn-process]')
+  const controls = page.locator('[data-turn-process], [data-process-activity]')
   await controls.first().waitFor({ state: 'visible', timeout: 10_000 })
   const count = await controls.count()
   for (let index = 0; index < count; index++) {
     const control = controls.nth(index)
-    if (await control.getAttribute('aria-expanded') !== 'true') await control.click()
+    if (await control.isVisible() && await control.getAttribute('aria-expanded') === 'false') await control.click()
   }
 }
 
 /**
- * Expand the Turn-process group containing one possibly hidden descendant.
+ * Expand the Turn process and secondary group containing a hidden descendant.
  * @param page - page containing the Chat view.
- * @param target - descendant whose owning Turn process should open.
+ * @param target - descendant whose outer process disclosures should open.
  */
 export async function expandOwningTurnProcess(page: Page, target: Locator): Promise<void> {
+  if (await target.isVisible()) return
   const turn = await target.evaluate(element => element.closest<HTMLElement>('[data-chat-turn]')?.dataset.chatTurn)
-  if (turn === undefined || await target.isVisible()) return
-  const control = page.locator(`[data-turn-process="${turn}"]`)
-  await control.waitFor({ state: 'visible', timeout: 10_000 })
-  if (await control.getAttribute('aria-expanded') !== 'true') await control.click()
+  if (turn !== undefined) {
+    const control = page.locator(`[data-turn-process="${turn}"]`)
+    await control.waitFor({ state: 'visible', timeout: 10_000 })
+    if (await control.getAttribute('aria-expanded') === 'false') await control.click()
+  }
+  const group = target.locator('xpath=ancestor::*[@data-chat-group-key][1]')
+  const header = group.locator('[data-process-activity]').first()
+  if (await header.isVisible() && await header.getAttribute('aria-expanded') === 'false') await header.click()
 }
 
 /** Fail loud on a stale checkout instead of testing yesterday's bundle. */
@@ -196,4 +224,18 @@ export async function saveFailureShot(page: Page, name: string): Promise<void> {
  */
 export function conversationContextKey(kind: string, id: string): string {
   return `${kind.length}:${kind}${id}`
+}
+
+/** Open Settings through the Web gear or Desktop account menu.
+ * @param page - browser page with the mounted sidebar.
+ * @param locale - current UI language.
+ */
+export async function openSettings(page: Page, locale: 'en' | 'zh'): Promise<void> {
+  const label = locale === 'zh' ? '设置' : 'Settings'
+  if (await page.evaluate(() => 'dshDesktop' in globalThis)) {
+    await page.getByRole('button', { name: locale === 'zh' ? '账号菜单' : 'Account menu', exact: true }).click()
+    await page.getByRole('menuitem', { name: label, exact: true }).click()
+  } else {
+    await page.getByRole('button', { name: label, exact: true }).click()
+  }
 }
