@@ -351,7 +351,15 @@ function syscallWaitsOnStdin(
 abstract class PosixProcessInspector implements ProcessInspector {
   constructor(protected readonly internals: ProcessInspectorInternals) {}
 
-  abstract foregroundPgid(shellPid: number): number | undefined
+  foregroundPgid(shellPid: number): number | undefined {
+    try {
+      const value = Number(this.internals.exec('/bin/ps', ['-o', 'tpgid=', '-p', String(shellPid)]).trim())
+      return Number.isSafeInteger(value) && value > 0 ? value : undefined
+    } catch (_missingProcess) {
+      return undefined
+    }
+  }
+
   abstract isStdinWaiting(pgid: number, shellPid: number): boolean
   abstract snapshot(): ProcessSnapshot
   abstract isAlive(identity: ProcessIdentity): boolean
@@ -507,15 +515,6 @@ function macProcessTable(internals: ProcessInspectorInternals): { rows: ProcessR
 }
 
 class MacProcessInspector extends PosixProcessInspector {
-  foregroundPgid(shellPid: number): number | undefined {
-    try {
-      const value = Number(this.internals.exec('/bin/ps', ['-o', 'tpgid=', '-p', String(shellPid)]).trim())
-      return Number.isSafeInteger(value) && value > 0 ? value : undefined
-    } catch (_missingProcess) {
-      return undefined
-    }
-  }
-
   isStdinWaiting(_pgid: number, _shellPid: number): boolean {
     return false
   }
@@ -533,15 +532,6 @@ class MacProcessInspector extends PosixProcessInspector {
 }
 
 class FreeBSDProcessInspector extends PosixProcessInspector {
-  foregroundPgid(shellPid: number): number | undefined {
-    try {
-      const value = Number(this.internals.exec('/bin/ps', ['-o', 'tpgid=', '-p', String(shellPid)]).trim())
-      return Number.isSafeInteger(value) && value > 0 ? value : undefined
-    } catch (_missingProcess) {
-      return undefined
-    }
-  }
-
   isStdinWaiting(_pgid: number, _shellPid: number): boolean {
     return false
   }
@@ -559,7 +549,7 @@ class FreeBSDProcessInspector extends PosixProcessInspector {
   }
 
   snapshot(): ProcessSnapshot {
-    return new PosixProcessSnapshot(freebsdProcessTable(this.internals))
+    return new PosixProcessSnapshot(freebsdProcessTable(this.internals), true)
   }
 
 }
