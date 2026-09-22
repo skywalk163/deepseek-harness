@@ -443,7 +443,7 @@ class LinuxProcessInspector extends PosixProcessInspector {
     super(internals)
   }
 
-  foregroundPgid(shellPid: number): number | undefined {
+  override foregroundPgid(shellPid: number): number | undefined {
     const tpgid = readLinuxStat(this.internals, shellPid)?.tpgid
     return tpgid !== undefined && tpgid > 0 ? tpgid : undefined
   }
