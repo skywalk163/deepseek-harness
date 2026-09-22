@@ -94,11 +94,11 @@ export class SettingsController extends TypertRemoteService {
    * return the configuration API's actionable missing-provider diagnostic.
    * @param ctx - Host context where settings and credential providers may be mounted.
    */
-  constructor(ctx: Context, config: Config = {}, internals: SettingsControllerInternals = {}) {
+  constructor(ctx: Context, options: Config & SettingsControllerInternals = {}) {
     super(ctx, 'settingsController', { namespace: 'settings' })
-    this.openTextFile = internals.openTextFile ?? openNativeTextFile
-    this.canOpenPath = internals.canOpenPath
-      ?? (() => config.nativeOpen ?? (internals.openPath !== undefined || canOpenNativePath()))
+    this.openTextFile = options.openTextFile ?? openNativeTextFile
+    this.canOpenPath = options.canOpenPath
+      ?? (() => options.nativeOpen ?? (options.openPath !== undefined || canOpenNativePath()))
     ctx.plugin(CredentialsController)
   }
 
