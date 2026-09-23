@@ -612,7 +612,10 @@ class ResolutionRouter {
 
 function internalModules(): InternalModules {
   const require = createRequire(import.meta.url)
-  const addon = require('node-addon-require-builtin') as { requireBuiltin(moduleId: string): unknown }
+  const addon: { requireBuiltin(moduleId: string): unknown } =
+    process.platform === 'freebsd'
+      ? { requireBuiltin: (moduleId: string) => require(moduleId) }
+      : (require('node-addon-require-builtin') as { requireBuiltin(moduleId: string): unknown })
   const esmModule = addon.requireBuiltin('internal/modules/esm/loader') as {
     getOrInitializeCascadedLoader(): ModuleLoaderV1 | ModuleLoaderV2
   }
