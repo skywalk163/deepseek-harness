@@ -9,6 +9,8 @@ overrides:
   '@deepseek-ai/cosmokit': link:vendor/cosmokit
   '@deepseek-ai/schemastery': link:vendor/schemastery
 
+packageExtensionsChecksum: sha256-wL7od7DfVQFCPGuFgQYh2UHvX0MTwc+D6rrFPusxsRk=
+
 patchedDependencies:
   '@earendil-works/pi-ai@0.85.1': b9bcce474fb2ac44633dff0fa722816a5bff5451b4575d5874035ea14ba70a4f
   '@electron/osx-sign@1.3.3': 280e7b2816caf01423097d24e79107a66afeb563a348630ce9928ae8499a5861
@@ -16,7 +18,7 @@ patchedDependencies:
   '@fortune-sheet/react@1.0.4': c17549e117c8fb99f408497c1e84292c21f25516fb762a32518f91b4d9ab0f04
   '@yao-pkg/pkg@6.21.0': 75891fc22b277c145cafeab83e41baf4a70f5b8fe6dc0801c6a0b922d7ee88c7
   exceljs@4.4.0: c1bf8ac8f319dab382f08e3a669b715e691d46c703ac5a4163eb383fbedd1d48
-  node-pty@1.2.0-beta.15: b40ae545608897914bd25fb009c97eeac478c34e8a910298ddcb01b746534bb0
+  node-pty@1.2.0-beta.15: 2798be81215bfd2bb45af2f40777121aae8905e30d7e21f17645851716391d07
 
 importers:
 
@@ -925,12 +927,17 @@ importers:
       '@deepseek-ai/node-addon-system-darwin-x64':
         specifier: workspace:~
         version: link:../darwin-x64
+      '@deepseek-ai/node-addon-system-freebsd-x64':
+        specifier: workspace:~
+        version: link:../freebsd-x64
       '@deepseek-ai/node-addon-system-linux-arm64':
         specifier: workspace:~
         version: link:../linux-arm64
       '@deepseek-ai/node-addon-system-linux-x64':
         specifier: workspace:~
         version: link:../linux-x64
+
+  native/system/packages/freebsd-x64: {}
 
   native/system/packages/linux-arm64: {}
 
@@ -12296,7 +12303,7 @@ importers:
         version: 3.1.1
       node-pty:
         specifier: 1.2.0-beta.15
-        version: 1.2.0-beta.15(patch_hash=b40ae545608897914bd25fb009c97eeac478c34e8a910298ddcb01b746534bb0)
+        version: 1.2.0-beta.15(patch_hash=2798be81215bfd2bb45af2f40777121aae8905e30d7e21f17645851716391d07)
     devDependencies:
       '@deepseek-ai/cordis':
         specifier: workspace:~
@@ -18663,7 +18670,7 @@ packages:
 
   glob@7.2.3:
     resolution: {integrity: sha512-nFR0zLpU2YCaRxwoCJvL6UvCH2JFyFVIvwTLsIf21AuHlMskA1hhTdk+LlYJtOlYt9v6dvszD2BGRqBL+iQK9Q==}
-    deprecated: Old versions of glob are not supported, and contain widely publicized security vulnerabilities, which have been fixed in the current version. Please update. Support for old versions may be purchased (at exorbitant rates) by contacting i@izs.me
+    deprecated: Glob versions prior to v9 are no longer supported
 
   global-agent@3.0.0:
     resolution: {integrity: sha512-PT6XReJ+D07JvGoxQMkT6qji/jVNfX/h364XHZOWeRzy64sSFr+xJ5OX7LI3b4MPQzdL4H8Y8M0xzPpsVMwA8Q==}
@@ -27300,7 +27307,7 @@ snapshots:
 
   node-int64@0.4.0: {}
 
-  node-pty@1.2.0-beta.15(patch_hash=b40ae545608897914bd25fb009c97eeac478c34e8a910298ddcb01b746534bb0):
+  node-pty@1.2.0-beta.15(patch_hash=2798be81215bfd2bb45af2f40777121aae8905e30d7e21f17645851716391d07):
     dependencies:
       node-addon-api: 7.1.1
 
@@ -28044,6 +28051,7 @@ snapshots:
       '@img/sharp-linux-x64': 0.35.3
       '@img/sharp-linuxmusl-arm64': 0.35.3
       '@img/sharp-linuxmusl-x64': 0.35.3
+      '@img/sharp-wasm32': 0.35.3
       '@img/sharp-webcontainers-wasm32': 0.35.3
       '@img/sharp-win32-arm64': 0.35.3
       '@img/sharp-win32-ia32': 0.35.3
