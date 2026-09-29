@@ -201,7 +201,7 @@ async function openNativePathWithIntent(
   if (platform === 'freebsd') {
     // FreeBSD has no platform-specific opener; xdg-open (from xdg-utils) reaches
     // the desktop when one is installed, exactly as on Linux.
-    await run('xdg-open', [path], signal)
+    await run('xdg-open', [path], signal, 'hidden')
     return
   }
 
