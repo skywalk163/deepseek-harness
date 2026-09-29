@@ -12,14 +12,38 @@
   en: 4e0248e4c6474fc6
   zh: eb2fb8d78c7d6bc0
 /deepseek-harness/run/run-from-npm:
-  en: e22005cd42e6cbad
+  en: 224f7f90dd3055a4
   zh: 0f536f4208df1d60
 /deepseek-harness/run/run-from-source:
-  en: 819e3f7c144d0d64
-  zh: de815f040975dba7
+  en: 701058f2e6bebb1c
+  zh: 7a144136e051e4a6
+/deepseek-harness/run/run-from-source-on-freebsd:
+  en: bb7cd6ab2e757a13
+  zh: a0391864dcfbee58
+/deepseek-harness/run/run-from-source-on-freebsd/prerequisites:
+  en: 609f5a9f69c28db7
+  zh: fa2000c8661d739e
+/deepseek-harness/run/run-from-source-on-freebsd/why-freebsd-uses-pnpm-dsh-freebsd:
+  en: 1d0bced7373a22e4
+  zh: 544a029211e7f311
+/deepseek-harness/run/run-from-source-on-freebsd/what-is-pre-configured-for-freebsd:
+  en: ddb283a0bc4696ee
+  zh: cc0ea4f55cf8785b
+/deepseek-harness/run/run-from-source-on-freebsd/accessing-the-web-ui-read-this-before-exposing-it-anywhere:
+  en: 7500a9ca5e4dfa36
+  zh: 27d2fa948d51ebbd
+/deepseek-harness/run/run-from-source-on-freebsd/running-as-a-service-restart-script-rc-d:
+  en: b0269e4831d834ff
+  zh: 369d01103c2b42ee
+/deepseek-harness/run/run-from-source-on-freebsd/troubleshooting-known-freebsd-pitfalls:
+  en: f939bbb6f5bfd197
+  zh: 4644f9a5d75492ce
+/deepseek-harness/run/run-from-source-on-freebsd/verified-on-freebsd:
+  en: 8f44adf08031a611
+  zh: 1e9d08b059842d1e
 /deepseek-harness/community-and-support:
   en: 42848f543aff6e02
-  zh: d46a07bdc6f36629
+  zh: 6b9877ba7ab2c221
 /deepseek-harness/contributing:
   en: cabc2d3e9f8898bd
   zh: 83b6d238bae29ce3

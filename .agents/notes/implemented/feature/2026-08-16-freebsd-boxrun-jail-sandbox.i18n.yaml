@@ -1,6 +1,19 @@
-# Bilingual-pair consistency record (docs/i18n/README.md): the git blob hash of each
-# side as of the last confirmed-consistent state. Both languages carry equal authority;
-# after editing either side, bring the other along and re-record with:
+# Bilingual-pair consistency record for 2026-08-16-freebsd-boxrun-jail-sandbox.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write .agents/notes/implemented/feature/2026-08-16-freebsd-boxrun-jail-sandbox.md
-2026-08-16-freebsd-boxrun-jail-sandbox.md: fc04edefea46e8e6459daf74a0a9dc270ff88b1e
-2026-08-16-freebsd-boxrun-jail-sandbox.zh.md: 101f5a9fe27710283d33a11c4eb004efaf940c9d
+/agent-note-freebsd-sandbox-rung-the-boxrun-jail-runner:
+  en: 14fc2d015b8a78ea
+  zh: 3811bb3cdfb36c07
+/agent-note-freebsd-sandbox-rung-the-boxrun-jail-runner/problem:
+  en: b92410e34ca59d71
+  zh: 9176df687d2de010
+/agent-note-freebsd-sandbox-rung-the-boxrun-jail-runner/decision:
+  en: a2df6654f246ec15
+  zh: bb147b8fc8d4e52b
+/agent-note-freebsd-sandbox-rung-the-boxrun-jail-runner/alternatives-considered:
+  en: e1c6de901abde297
+  zh: 14794823d5dffb40
+/agent-note-freebsd-sandbox-rung-the-boxrun-jail-runner/consequences:
+  en: e23081fefcb80315
+  zh: 875cc5f2e2284e7b
