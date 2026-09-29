@@ -30,16 +30,26 @@ vi.mock('@vscode/ripgrep', () => new Proxy({}, {
   },
 }))
 
+// Capture the env override at module load so beforeEach/afterEach can make it
+// truly absent rather than empty string. The resolveRgPath guard is
+// `override !== undefined && existsSync(override)`: setting the var to '' only
+// survives because the real existsSync('') is false here. Deleting it is the
+// honest "no override" signal and stays correct even if existsSync is later
+// mocked in this file.
+const originalRipgrepOverride = process.env.DSH_RIPGREP_PATH
+
 describe('lazy packaged-ripgrep resolution', () => {
   beforeEach(() => {
     // Remove every usable candidate: the mocked platform package (above), the
-    // env override, and the system `rg` on PATH.
+    // env override (must be ABSENT, not ''), and the system `rg` on PATH.
     vi.stubEnv('PATH', '/nonexistent-dsh-ripgrep-test')
-    vi.stubEnv('DSH_RIPGREP_PATH', '')
+    delete process.env.DSH_RIPGREP_PATH
   })
 
   afterEach(() => {
     vi.unstubAllEnvs()
+    if (originalRipgrepOverride === undefined) delete process.env.DSH_RIPGREP_PATH
+    else process.env.DSH_RIPGREP_PATH = originalRipgrepOverride
   })
 
   it('fails the first search call with SEARCH_FAILED instead of failing module load', async () => {
