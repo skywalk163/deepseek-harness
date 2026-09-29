@@ -18,6 +18,9 @@
       "path": "../locale/tsconfig.client.json"
     },
     {
+      "path": "../store"
+    },
+    {
       "path": "../ui-settings/tsconfig.client.json"
     },
     {
@@ -30,6 +33,9 @@
       "path": "../ui-slots"
     },
     {
+      "path": "../ui-theme/tsconfig.client.json"
+    },
+    {
       "path": "../../credentials/deepseek-account"
     },
     {
@@ -40,6 +46,18 @@
     },
     {
       "path": "../../../vendor/schemastery"
+    },
+    {
+      "path": "../ui-chat/tsconfig.client.json"
+    },
+    {
+      "path": "../ui-layout"
+    },
+    {
+      "path": "../../settings/settings"
+    },
+    {
+      "path": "../product-analytics/tsconfig.client.json"
     }
   ]
 }

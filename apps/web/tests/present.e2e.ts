@@ -14,7 +14,7 @@ import {
   compareOrRefreshGolden, fixtureUserPrompts, launchWebScaffold, recordFixture,
   watchConsole, webSnapshotMode, type WebScaffold,
 } from './scaffold.ts'
-import { connectFreshWorkspace, expandTurnProcesses, newEnglishPage } from './support.ts'
+import { connectFreshWorkspace, expandTurnProcesses, newEnglishPage, scrollIntoView } from './support.ts'
 
 const DIR = fileURLToPath(new URL('../../../snapshots/web/present', import.meta.url))
 const FIXTURE = join(DIR, 'session.v3.jsonl')
@@ -260,7 +260,7 @@ fs.appendFileSync(${JSON.stringify(openLog)}, JSON.stringify({ path, action, con
           openFontSize: getComputedStyle(open).fontSize,
         }
       })
-      expect(geometry.answerToPresented).toBeCloseTo(20, 1)
+      expect(geometry.answerToPresented).toBeCloseTo(16, 1)
       expect(geometry.presentedToActions).toBeCloseTo(20, 1)
       expect(geometry.cardHeight).toBeCloseTo(60, 1)
       expect(geometry.cardColumnGap).toBeCloseTo(10, 1)
@@ -271,8 +271,9 @@ fs.appendFileSync(${JSON.stringify(openLog)}, JSON.stringify({ path, action, con
       expect(geometry.descriptionFontSize).toBe('10px')
       expect(geometry.openFontSize).toBe('11px')
       await page.setViewportSize({ width: 480, height: 900 })
+      await page.locator('[data-sidebar-collapsed="true"]').waitFor({ state: 'attached' })
       const row = page.locator('[data-presented-files-row]')
-      await row.scrollIntoViewIfNeeded()
+      await scrollIntoView(row)
       for (const card of await row.getByRole('button').all()) {
         const bounds = await card.boundingBox()
         expect(bounds).not.toBeNull()

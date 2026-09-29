@@ -7,16 +7,17 @@ import { fileURLToPath } from 'node:url'
 import { join } from 'node:path'
 import type { Browser, Page, WebSocketRoute } from 'playwright'
 import { chromium } from 'playwright'
-import { afterAll, beforeAll, describe, expect, it, onTestFailed } from 'vitest'
+import { afterAll, beforeAll, describe, expect, it, onTestFailed, type MockInstance } from 'vitest'
 import { parseSessionLog } from '@deepseek-ai/dsh-llm-replay'
 import type { SessionEvent } from '@deepseek-ai/dsh-session'
 import { expandAssistantStream } from '@deepseek-ai/dsh-llm'
+import { parseRemoteStreamServerMessage } from '@deepseek-ai/dsh-api-gateway/stream-protocol'
 import {
   acknowledgeReloadConnectionLoss, assertFixtureInventory, captureExpandedTurnProcessAria, captureStableAria,
   compareOrRefreshGolden, fixtureUserPrompts,
   launchWebScaffold, recordFixture, watchConsole, webSnapshotMode, type WebScaffold,
 } from './scaffold.ts'
-import { openSettings, connectFreshWorkspace, newEnglishPage, saveFailureShot } from './support.ts'
+import { openSettings, connectFreshWorkspace, newEnglishPage, pinBrowserClock, pinHostClock, saveFailureShot } from './support.ts'
 
 const SNAPSHOT_DIR = fileURLToPath(new URL('../../../snapshots/web/steering', import.meta.url))
 const FIXTURE = join(SNAPSHOT_DIR, 'session.v3.jsonl')
@@ -71,15 +72,22 @@ describe('web e2e: mid-turn steering lands durably and visibly', () => {
   let browser: Browser
   let page: Page
   let tripwire: ReturnType<typeof watchConsole>
+  let hostClock: MockInstance<typeof Date.now> | undefined
+  let unpinBrowserClock: (() => void) | undefined
   const sessionEvents: SessionEvent[] = []
 
   beforeAll(async () => {
+    // This scenario types its own messages, so the Host stamps their times: both
+    // clocks must read the fixture day or a run across Asia/Shanghai midnight
+    // renders the same message with a date prefix.
+    hostClock = pinHostClock()
     scaffold = await launchWebScaffold(MODE === 'record'
       ? {}
       : { replayFixture: FIXTURE, paceMs: REPLAY_PACE_MS, compareReplaySession: true })
     scaffold.ctx.on('session/event', (_session, event) => { sessionEvents.push(event) })
     browser = await chromium.launch()
     page = await newEnglishPage(browser)
+    unpinBrowserClock = await pinBrowserClock(page)
     tripwire = watchConsole(page)
     await page.goto(scaffold.authenticatedUrl, { waitUntil: 'load' })
     await page.waitForSelector('[class*="frame"]', { timeout: 30_000 })
@@ -88,8 +96,15 @@ describe('web e2e: mid-turn steering lands durably and visibly', () => {
   }, 120_000)
 
   afterAll(async () => {
-    await browser?.close()
-    await scaffold?.close()
+    try {
+      await browser?.close()
+      await scaffold?.close()
+    } finally {
+      // A failing close (unconsumed fixture, mismatched snapshot) must not
+      // leave the pinned clocks running for the suites after this one.
+      unpinBrowserClock?.()
+      hostClock?.mockRestore()
+    }
   })
 
   it('strictly steers one queued row; the interjection is logged, rendered, and obeyed', async () => {
@@ -191,13 +206,21 @@ describe('web e2e: mid-turn steering lands durably and visibly', () => {
   })
 })
 
-describe('web e2e: composer shortcut steers directly', () => {
+describe.each(['reconnect', 'delayed-inbox'] as const)('web e2e: composer shortcut steers directly (%s)', (handoff) => {
   let scaffold: WebScaffold
   let browser: Browser
   let page: Page
   let tripwire: ReturnType<typeof watchConsole>
   let remoteSocket: WebSocketRoute | undefined
   const sessionEvents: SessionEvent[] = []
+  let holdInbox = false
+  let heldStream: string | undefined
+  let heldControl: (() => void)[] = []
+  const releaseInbox = (): void => {
+    holdInbox = false
+    for (const send of heldControl) send()
+    heldControl = []
+  }
 
   beforeAll(async () => {
     scaffold = await launchWebScaffold({ replayFixture: FIXTURE, paceMs: REPLAY_PACE_MS, compareReplaySession: false })
@@ -206,7 +229,17 @@ describe('web e2e: composer shortcut steers directly', () => {
     page = await newEnglishPage(browser)
     await page.routeWebSocket('**/api/remote.mux', (route) => {
       remoteSocket = route
-      route.connectToServer()
+      const server = route.connectToServer()
+      server.onMessage((message) => {
+        const frame = parseRemoteStreamServerMessage(String(message))
+        if (holdInbox && frame.type === 'item') {
+          const value = frame.value as { type?: string; key?: string }
+          if (value.type === 'projection' && value.key === 'inbox') heldStream = frame.streamId
+        }
+        // Hold the remaining control stream in FIFO order, while history keeps flowing.
+        if (holdInbox && frame.streamId === heldStream) heldControl.push(() => { route.send(message) })
+        else route.send(message)
+      })
     })
     tripwire = watchConsole(page)
     await page.goto(scaffold.authenticatedUrl, { waitUntil: 'load' })
@@ -251,6 +284,7 @@ describe('web e2e: composer shortcut steers directly', () => {
       return next()
     })
     try {
+      holdInbox = handoff === 'delayed-inbox'
       await composer.getByRole('radio', { name: 'Yes' }).click()
       await composer.getByRole('radio', { name: 'Yes' }).press('Enter')
       await expect.poll(() => claimed, { timeout: 10_000 }).toBe(true)
@@ -259,16 +293,25 @@ describe('web e2e: composer shortcut steers directly', () => {
       }))
       expect(await page.getByText(STEER, { exact: true }).count()).toBe(1)
       expect(await page.locator('[data-submission-echo]').filter({ hasText: STEER }).count()).toBe(1)
-      const socket = remoteSocket
-      if (socket === undefined) throw new Error('steering page has no Remote connection')
-      const warningStart = tripwire.warnings.length
-      await socket.close({ code: 1012, reason: 'steering reconnect checkpoint' })
-      await expect.poll(() => remoteSocket !== socket, { timeout: 10_000 }).toBe(true)
-      await expect.poll(() => page.locator('[data-submission-echo]').count(), { timeout: 10_000 }).toBe(0)
-      expect(await page.getByText(STEER, { exact: true }).count()).toBe(0)
-      acknowledgeReloadConnectionLoss(tripwire, warningStart)
+      if (handoff === 'reconnect') {
+        const socket = remoteSocket
+        if (socket === undefined) throw new Error('steering page has no Remote connection')
+        const warningStart = tripwire.warnings.length
+        await socket.close({ code: 1012, reason: 'steering reconnect checkpoint' })
+        await expect.poll(() => remoteSocket !== socket, { timeout: 10_000 }).toBe(true)
+        await expect.poll(() => page.locator('[data-submission-echo]').count(), { timeout: 10_000 }).toBe(0)
+        expect(await page.getByText(STEER, { exact: true }).count()).toBe(0)
+        acknowledgeReloadConnectionLoss(tripwire, warningStart)
+      } else {
+        await expect.poll(() => heldControl.length, { timeout: 10_000 }).toBeGreaterThan(0)
+        admission.resolve(undefined)
+        await page.locator('[data-chat-flow-kind="steering"]').filter({ hasText: STEER }).waitFor({ timeout: 10_000 })
+        expect(await page.getByText(STEER, { exact: true }).count()).toBe(1)
+        expect(await pendingSteering.count()).toBe(0)
+      }
     } finally {
       admission.resolve(undefined)
+      releaseInbox()
       stopHolding()
       await settled
     }
@@ -352,9 +395,12 @@ describe('web e2e: empty-draft Cmd+Enter steers the whole queue', () => {
   let browser: Browser
   let page: Page
   let tripwire: ReturnType<typeof watchConsole>
+  let hostClock: MockInstance<typeof Date.now> | undefined
+  let unpinBrowserClock: (() => void) | undefined
   const sessionEvents: SessionEvent[] = []
 
   beforeAll(async () => {
+    hostClock = pinHostClock()
     // The scenario boots a fresh session against the override-only fixture;
     // the replay.override.json sidecar replaces the derived script, so the
     // (deliberately absent) session.jsonl is never read.
@@ -370,6 +416,7 @@ describe('web e2e: empty-draft Cmd+Enter steers the whole queue', () => {
     scaffold.ctx.on('session/event', (_session, event) => { sessionEvents.push(event) })
     browser = await chromium.launch()
     page = await newEnglishPage(browser)
+    unpinBrowserClock = await pinBrowserClock(page)
     tripwire = watchConsole(page)
     await page.goto(scaffold.authenticatedUrl, { waitUntil: 'load' })
     await page.waitForSelector('[class*="frame"]', { timeout: 30_000 })
@@ -380,8 +427,13 @@ describe('web e2e: empty-draft Cmd+Enter steers the whole queue', () => {
   afterAll(async () => {
     releaseReplay.resolve(undefined)
     disposeReplayBarrier?.()
-    await browser?.close()
-    await scaffold?.close()
+    try {
+      await browser?.close()
+      await scaffold?.close()
+    } finally {
+      unpinBrowserClock?.()
+      hostClock?.mockRestore()
+    }
   })
 
   it.skipIf(MODE === 'record')('queues two messages, then flushes both with an empty-draft Cmd+Enter', async () => {
@@ -395,6 +447,10 @@ describe('web e2e: empty-draft Cmd+Enter steers the whole queue', () => {
     await page.locator('[data-composer-input][contenteditable="true"]').first().waitFor({ timeout: 10_000 })
     await input.fill(PROMPT)
     await input.press('Enter')
+    // The turn must report busy before the next two sends: Enter's queue gesture
+    // resolved against a not-yet-running agent admits the message into the turn
+    // instead of publishing a Queue row.
+    await page.getByRole('button', { name: 'Stop generating' }).waitFor({ timeout: 10_000 })
     await page.locator('[data-composer-input][contenteditable="true"]').first().waitFor({ timeout: 10_000 })
     await input.fill(STEER_ONE)
     await input.press('Enter')

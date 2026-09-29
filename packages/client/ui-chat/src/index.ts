@@ -2,21 +2,22 @@
 import type {} from '@deepseek-ai/dsh-settings'
 
 import type { Volatile, Context } from '@deepseek-ai/cordis'
-import type { LinkOpening, TranscriptViewMode, PerformanceUsageMode } from './chat-settings.ts'
+import type { ChatSettings, LinkOpening, PerformanceUsageMode } from './chat-settings.ts'
 import z from '@deepseek-ai/schemastery'
 import { TRANSCRIPT_VIEW_FIELD } from './chat-settings.ts'
 
 import { ChatSettingsFields } from './chat-settings.ts'
 
 export {
-  CHAT_SETTINGS_NAMESPACE, DEFAULT_TRANSCRIPT_VIEW_MODE, LEGACY_TRANSCRIPT_VIEW_MODE, TRANSCRIPT_VIEW_FIELD,
+  CHAT_SETTINGS_NAMESPACE, DEFAULT_TRANSCRIPT_VIEW_MODE, LEGACY_TRANSCRIPT_VIEW_MODE,
+  LEGACY_EXPANDED_TRANSCRIPT_VIEW_MODE, TRANSCRIPT_VIEW_FIELD,
   TRANSCRIPT_VIEW_MODES, type ChatSettings, type TranscriptViewMode,
 } from './chat-settings.ts'
 
 /** Runtime preferences projected to the browser. */
 export interface Config {
   /** Completed turn transcript presentation. */
-  transcriptView: Volatile<TranscriptViewMode>
+  transcriptView: Volatile<ChatSettings['transcriptView']>
   /** Performance and usage detail level. */
   performanceUsage: Volatile<PerformanceUsageMode>
   /** Default destination for Chat HTTP(S) links. */

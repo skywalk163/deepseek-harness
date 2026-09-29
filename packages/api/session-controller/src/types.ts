@@ -157,7 +157,7 @@ export interface ModelCatalogFailure {
 /** Host-generation model catalog and the default used by unconfigured Sessions. */
 export interface ModelCatalog {
   readonly default: ModelSelection
-  /** Provider routes currently able to serve a request, including empty catalogs. */
+  /** Provider routes with at least one currently available catalog model. */
   readonly routableProviders: readonly string[]
   readonly groups: readonly ModelProviderGroup[]
   readonly failures: readonly ModelCatalogFailure[]
@@ -201,6 +201,8 @@ export const SESSION_SEARCH_SNIPPET_MAX_CODE_POINTS = 240
 
 declare module '@deepseek-ai/dsh-typert-protocol' {
   interface RemoteErrorDetailsMap {
+    'session/provider-credentials-unavailable': Record<string, never>
+    'session/provider-models-unavailable': { readonly provider: string }
     'session/model-unavailable': { readonly provider: string; readonly model: string }
     'session/conflict': {
       readonly sessionId: SessionId
@@ -472,12 +474,18 @@ export interface SessionPageRequest {
   readonly throughSeq: number
   readonly beforeSeq?: number
   readonly maxMessages?: number
+  /** Stop at a Turn start after both minima, unless maxMessages or history exhaustion wins. */
+  readonly turnWindow?: {
+    /** Minimum append-origin user/assistant messages; must not exceed maxMessages. */
+    readonly minMessages: number
+    /** Minimum Turn starts crossed, including the partial Turn at beforeSeq. */
+    readonly minTurns: number
+  }
 }
 
 /** One live event request for a durable Session address. */
-export interface SessionFollowRequest {
+export interface SessionFollowRequest extends Pick<SessionPageRequest, 'maxMessages' | 'turnWindow'> {
   readonly address: SessionAddress
-  readonly maxMessages?: number
   /** Include process-local assistant presentation frames for the Web client. */
   readonly assistantStream?: true
 }

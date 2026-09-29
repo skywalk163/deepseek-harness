@@ -3,20 +3,25 @@
 import { createSnapshotStore, type SnapshotStore } from '@deepseek-ai/dsh-client-store'
 import type { ConfigForm } from '@deepseek-ai/dsh-client-ui-settings/client'
 import {
-  DEFAULT_TRANSCRIPT_VIEW_MODE, LEGACY_TRANSCRIPT_VIEW_MODE, TRANSCRIPT_VIEW_FIELD,
+  DEFAULT_TRANSCRIPT_VIEW_MODE, LEGACY_TRANSCRIPT_VIEW_MODE, LEGACY_EXPANDED_TRANSCRIPT_VIEW_MODE, TRANSCRIPT_VIEW_FIELD,
   type ChatSettings, type TranscriptViewMode,
 } from '../chat-settings.ts'
 
 /** Live work-details preference consumed by Chat and its Settings row. */
 export class TranscriptViewPolicy {
   private readonly unsubscribe: () => void
-  /** Reactive current mode; defaults to Compact before Host settings arrive. */
-  readonly mode: SnapshotStore<TranscriptViewMode> = createSnapshotStore(DEFAULT_TRANSCRIPT_VIEW_MODE)
+  /** Reactive current mode, including the client default before Host settings arrive. */
+  readonly mode: SnapshotStore<TranscriptViewMode>
 
   /**
    * @param host - durable Chat settings scope.
+   * @param defaultMode - presentation used without an explicit saved mode.
    */
-  constructor(private readonly host: ConfigForm<ChatSettings>) {
+  constructor(
+    private readonly host: ConfigForm<ChatSettings>,
+    private readonly defaultMode: TranscriptViewMode = DEFAULT_TRANSCRIPT_VIEW_MODE,
+  ) {
+    this.mode = createSnapshotStore(defaultMode)
     this.unsubscribe = host.subscribe(() => { this.adopt() })
     this.adopt()
   }
@@ -26,7 +31,7 @@ export class TranscriptViewPolicy {
 
   /**
    * Publish and persist one explicit user choice.
-   * @param mode - Compact, Detailed, or Expanded work details.
+   * @param mode - Compact, Standard, Detailed, or Verbose work details.
    */
   setMode(mode: TranscriptViewMode): void {
     if (this.mode.getSnapshot() === mode) return
@@ -38,7 +43,9 @@ export class TranscriptViewPolicy {
   private adopt(): void {
     const section = this.host.getSnapshot().value
     if (section === undefined) return
-    const mode = section.transcriptView === LEGACY_TRANSCRIPT_VIEW_MODE ? 'detailed' : section.transcriptView
+    const saved = section.transcriptView
+    const mode = saved === LEGACY_TRANSCRIPT_VIEW_MODE || saved === LEGACY_EXPANDED_TRANSCRIPT_VIEW_MODE
+      ? 'detailed' : saved ?? this.defaultMode
     if (this.mode.getSnapshot() !== mode) this.mode.set(mode)
   }
 }

@@ -1,7 +1,7 @@
 /** Read-only spreadsheet surface backed by browser-parsed workbook data. */
-import { useEffect, useState, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { Workbook } from '@fortune-sheet/react'
-import { Button, IconWarningTriangleOutlineRegular, StateDot, Tooltip } from '@deepseek-ai/dsh-client-ui-primitives'
+import { Button, IconWarningTriangleOutlineRegular, Tooltip } from '@deepseek-ai/dsh-client-ui-primitives'
 import fortuneCss from '@fortune-sheet/react/dist/index.css?inline'
 import type { ExcelFormat } from './format.ts'
 import type { ExcelPreview } from './model.ts'
@@ -14,13 +14,15 @@ const scopedStyles = `@scope ([data-excel-preview]) { ${fortuneCss} }`
 
 /**
  * Display stored spreadsheet values and formats without editing or recalculation.
+ * Keep the mounted workbook sized to its preview pane.
  * @param props - Complete workbook bytes, limits, and locale.
  * @returns An isolated spreadsheet surface with cancellable loading.
  */
-export function ExcelBody({ content, format, limits, t }: LoadedExcelBodyProps): ReactNode {
+export function ExcelBody({ content, format, limits, t, loading }: LoadedExcelBodyProps): ReactNode {
   const data = content.kind === 'bytes' ? content.data : undefined
   const [state, setState] = useState<State>()
   const [attempt, setAttempt] = useState(0)
+  const workbookRef = useRef<HTMLDivElement>(null)
   useEffect(() => {
     if (data === undefined) return
     const controller = new AbortController()
@@ -31,10 +33,16 @@ export function ExcelBody({ content, format, limits, t }: LoadedExcelBodyProps):
     )
     return () => { controller.abort() }
   }, [data, format, limits, attempt])
+  useEffect(() => {
+    const element = workbookRef.current
+    if (element === null || typeof ResizeObserver === 'undefined') return
+    // FortuneSheet measures its canvas on window resize, but pane resizing does not emit that event.
+    const observer = new ResizeObserver(() => { window.dispatchEvent(new Event('resize')) })
+    observer.observe(element)
+    return () => { observer.disconnect() }
+  }, [state])
   if (data === undefined) return <p className={css.status} role="alert">{t('invalid')}</p>
-  if (state?.data !== data || state.format !== format) return <span className={css.status} role="status" aria-label={t('loading')} data-document-loading>
-    <StateDot state="ongoing" />
-  </span>
+  if (state?.data !== data || state.format !== format) return loading
   if ('error' in state) return <div className={css.status} role="alert">
     <span>{t(state.error === 'tooLarge' || state.error === 'timeout' || state.error === 'encoding' ? state.error : 'invalid')}</span>
     <Button size="sm" onClick={() => { setAttempt(value => value + 1) }}>{t('retry')}</Button>
@@ -46,7 +54,7 @@ export function ExcelBody({ content, format, limits, t }: LoadedExcelBodyProps):
       <IconWarningTriangleOutlineRegular size={16} />
       <span>{t('unsupportedNotice', { features: state.value.unsupportedFeatures.map(feature => t(feature)).join(t('featureSeparator')) })}</span>
     </div>}
-    <div className={`${css.workbook} ${hasFormulas ? css.withFormulaWarning : ''}`}>
+    <div ref={workbookRef} className={`${css.workbook} ${hasFormulas ? css.withFormulaWarning : ''}`}>
       {hasFormulas && <Tooltip portal label={t('formulaWarning')} side="bottom" delayMs={500}>
         <button type="button" className={css.formulaWarning} aria-label={t('formulaWarning')} data-excel-formula-warning>
           <IconWarningTriangleOutlineRegular size={14} />

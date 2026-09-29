@@ -5,6 +5,11 @@ import clsx from 'clsx'
 import { IconCheckOutlineRegular } from './icons/index.tsx'
 import { overlayTopMargin } from './overlay-top-margin.ts'
 import { usePointerGrace } from './pointer-grace.ts'
+import { isBehindModal } from './useModalLayer.ts'
+import { observeComposition } from './keyboard-composition.ts'
+import { focusWithoutRing } from './focus.ts'
+import { ShortcutKeys } from './ShortcutKeys.tsx'
+import { MenuSurface } from './MenuSurface.tsx'
 import css from './Menu.module.css'
 
 /** Selectable row (optionally with a nested submenu). */
@@ -12,6 +17,8 @@ export interface MenuItem {
   id: string
   label: ReactNode
   disabled?: boolean
+  /** Effective binding supplied by the command owner; omitted for unbound actions. */
+  shortcut?: { keys: readonly string[]; aria?: string | undefined }
   /** Leading icon (figma .Menu_cell gap 8). */
   icon?: ReactNode
   /** Destructive row: error-colored text/icon and danger hover fill. */
@@ -40,6 +47,8 @@ export type MenuEntry = MenuItem | MenuSeparator | MenuLabel
 export interface MenuItemButtonProps {
   /** Visible row label. */
   children: ReactNode
+  /** Effective binding supplied by the command owner; omitted for unbound actions. */
+  shortcut?: MenuItem['shortcut']
   /** Leading icon (figma .Menu_cell gap 8). */
   icon?: ReactNode
   /** Whether the row cannot be activated. */
@@ -64,6 +73,7 @@ export interface MenuItemButtonProps {
  * without any shared state. Closing the menu stays the owner's decision, as
  * it is for data rows.
  * @param props.children - visible row label.
+ * @param props.shortcut - effective key labels and accessible combination.
  * @param props.icon - optional leading icon.
  * @param props.disabled - whether the row cannot be activated.
  * @param props.danger - whether to use the destructive row colors.
@@ -72,7 +82,7 @@ export interface MenuItemButtonProps {
  * @returns one menu-item row.
  */
 export function MenuItemButton({
-  children, icon, disabled = false, danger = false, separatorBefore = false, onSelect,
+  children, shortcut, icon, disabled = false, danger = false, separatorBefore = false, onSelect,
 }: MenuItemButtonProps) {
   return (
     <div className={css.itemWrap}>
@@ -82,10 +92,12 @@ export function MenuItemButton({
         role="menuitem"
         className={clsx(css.item, danger && css.danger)}
         disabled={disabled}
+        aria-keyshortcuts={shortcut?.aria}
         onClick={onSelect}
       >
         {icon !== undefined && <span className={css.itemIcon}>{icon}</span>}
         <span className={css.itemLabel}>{children}</span>
+        {shortcut !== undefined && <span aria-hidden="true" className={css.shortcut}><ShortcutKeys keys={shortcut.keys} className={css.shortcutKeys} /></span>}
       </button>
     </div>
   )
@@ -122,7 +134,7 @@ const MEASURE_STYLE: CSSProperties = { visibility: 'hidden', left: 0, top: 0 }
  * @param props.align - list alignment against the anchor (default 'start').
  * @param props.side - open below (`bottom`, default) or above (`top`) the anchor.
  * @param props.portal - render the list into document.body, fixed-positioned
- * from the anchor rect (repositions on scroll/resize while open). Use when an
+ * from the anchor rect (follows movement and resizing while open). Use when an
  * ancestor's overflow clipping would crop the in-place list; default false
  * keeps the pure-CSS in-place behavior.
  * @param props.closeOnPointerLeave - close the list once the pointer has left
@@ -135,8 +147,8 @@ const MEASURE_STYLE: CSSProperties = { visibility: 'hidden', left: 0, top: 0 }
  * directly (e.g. from a host-owned trigger button) instead of measuring the
  * Menu's own wrapper span. Required when the wrapper isn't itself laid out at
  * the trigger (render-prop anchors, effect-positioned proxies — measuring the
- * wrapper there races the host's layout effects). Called on open and on every
- * scroll/resize; return null to skip placement for that frame.
+ * wrapper there races the host's layout effects). Called on open, each animation
+ * frame, and scroll/resize; return null to skip placement for that frame.
  * @param props.footer - rows pinned below the scrolling items area, separated
  * by a hairline; they stay visible while the items above scroll.
  * @param props.children - component rows rendered after `items` in the same
@@ -185,20 +197,22 @@ export function Menu({ open, anchor, items = [], children, selectedId, selectedI
    * able to name by position.
    */
   const triggerRef = useRef<HTMLElement | null>(null)
+  const selectingWithTab = useRef(false)
 
   /**
    * Hand the keyboard back to the trigger that opened the menu — or, when the
    * anchor never held it, to the anchor's first button. Focus left on a removed
    * row otherwise falls to the page body, where the next Tab restarts from the
    * top of the page.
+   * @param navigation - whether explicit keyboard traversal should retain its focus indicator.
    */
-  const refocusAnchor = (): void => {
+  const refocusAnchor = (navigation = false): void => {
     const trigger = triggerRef.current
-    if (trigger !== null && document.contains(trigger) && !(trigger as HTMLButtonElement).disabled) {
-      trigger.focus()
-      return
-    }
-    rootRef.current?.querySelector<HTMLButtonElement>('button:not(:disabled)')?.focus()
+    const target = trigger !== null && document.contains(trigger) && !(trigger as HTMLButtonElement).disabled
+      ? trigger : rootRef.current?.querySelector<HTMLButtonElement>('button:not(:disabled)')
+    if (target == null) return
+    if (navigation) target.focus()
+    else focusWithoutRing(target)
   }
 
   /**
@@ -209,10 +223,11 @@ export function Menu({ open, anchor, items = [], children, selectedId, selectedI
    * its removal produced) comes back to the trigger.
    */
   const refocusAfterSelection = (): void => {
+    const navigation = selectingWithTab.current
     queueMicrotask(() => {
       if (openRef.current) return
       const active = document.activeElement
-      if (active === null || active === document.body || listRef.current?.contains(active) === true) refocusAnchor()
+      if (active === null || active === document.body || listRef.current?.contains(active) === true) refocusAnchor(navigation)
     })
   }
   const openRef = useRef(open)
@@ -260,15 +275,22 @@ export function Menu({ open, anchor, items = [], children, selectedId, selectedI
       if (lw > 0) x = Math.min(Math.max(x, MARGIN), vw - lw - MARGIN)
       if (lh > 0) y = Math.min(Math.max(y, overlayTopMargin(MARGIN)), vh - lh - MARGIN)
 
-      setFixedPos({ left: x, top: y })
+      setFixedPos(current => current?.left === x && current.top === y ? current : { left: x, top: y })
     }
     // First run measures the hidden pre-render (same commit as `open`), so
     // end/top alignment and clamping use real dimensions before anything
     // paints — no visible jump from a zero-size first guess.
     place()
+    // Dragging or transforming an ancestor moves the anchor without a scroll or resize event.
+    const track = () => {
+      place()
+      frame = requestAnimationFrame(track)
+    }
+    let frame = requestAnimationFrame(track)
     window.addEventListener('scroll', place, true)
     window.addEventListener('resize', place)
     return () => {
+      cancelAnimationFrame(frame)
       window.removeEventListener('scroll', place, true)
       window.removeEventListener('resize', place)
     }
@@ -291,7 +313,7 @@ export function Menu({ open, anchor, items = [], children, selectedId, selectedI
     if (!open || !autoFocus) return
     const first = listRef.current?.querySelector<HTMLButtonElement>('button:not(:disabled)')
     walkIndex.current = first === undefined || first === null ? null : 0
-    first?.focus()
+    if (first != null) focusWithoutRing(first)
   }, [open, autoFocus])
 
   useEffect(() => {
@@ -300,6 +322,7 @@ export function Menu({ open, anchor, items = [], children, selectedId, selectedI
       walkIndex.current = null
       return
     }
+    const composition = observeComposition(document)
     const onPointerDown = (e: PointerEvent) => {
       if (!(e.target instanceof Node)) return
       // The portaled list is outside the anchor subtree; check both.
@@ -308,12 +331,15 @@ export function Menu({ open, anchor, items = [], children, selectedId, selectedI
       onClose()
     }
     const onKeyDown = (e: KeyboardEvent) => {
+      if (composition.guards(e) || isBehindModal(rootRef.current) || e.defaultPrevented || e.ctrlKey || e.altKey || e.metaKey) return
       // Where the keyboard is, computed once: the menu owns it when it holds a
       // row or sits on its anchor region.
       const focused = document.activeElement
       const insideList = listRef.current?.contains(focused) === true
       const anchored = rootRef.current?.contains(focused) === true || insideList
-      if (e.key === 'Escape') {
+      if (e.key === 'Escape' && !e.shiftKey) {
+        e.preventDefault()
+        if (e.repeat) return
         // Closing hands the keyboard back when the menu had it — and, as this
         // primitive always did for autoFocus menus, when it held the keyboard
         // and lost it again (a row that unmounted under it).
@@ -330,7 +356,7 @@ export function Menu({ open, anchor, items = [], children, selectedId, selectedI
         if (e.shiftKey) {
           e.preventDefault()
           onClose()
-          refocusAnchor()
+          refocusAnchor(true)
           return
         }
         // Tab settles the row it is on; from anywhere else in the menu region
@@ -340,7 +366,9 @@ export function Menu({ open, anchor, items = [], children, selectedId, selectedI
         if (insideList) {
           if (focused instanceof Element && focused.getAttribute('role') === 'menuitem') {
             e.preventDefault()
-            ;(focused as HTMLElement).click()
+            selectingWithTab.current = true
+            try { (focused as HTMLElement).click() }
+            finally { selectingWithTab.current = false }
           }
           return
         }
@@ -382,11 +410,16 @@ export function Menu({ open, anchor, items = [], children, selectedId, selectedI
       if (document.activeElement instanceof HTMLIFrameElement) onClose()
     }
     document.addEventListener('pointerdown', onPointerDown)
-    document.addEventListener('keydown', onKeyDown)
+    const onEscape = (event: KeyboardEvent): void => { if (event.key === 'Escape') onKeyDown(event) }
+    const onOtherKey = (event: KeyboardEvent): void => { if (event.key !== 'Escape') onKeyDown(event) }
+    document.addEventListener('keydown', onOtherKey)
+    document.addEventListener('keydown', onEscape, true)
     window.addEventListener('blur', onWindowBlur)
     return () => {
+      composition.dispose()
       document.removeEventListener('pointerdown', onPointerDown)
-      document.removeEventListener('keydown', onKeyDown)
+      document.removeEventListener('keydown', onOtherKey)
+      document.removeEventListener('keydown', onEscape, true)
       window.removeEventListener('blur', onWindowBlur)
     }
   }, [open, onClose, autoFocus])
@@ -425,6 +458,7 @@ export function Menu({ open, anchor, items = [], children, selectedId, selectedI
           role="menuitem"
           className={clsx(css.item, selected && (selection === 'fill' ? css.selectedFill : css.selected), entry.danger === true && css.danger)}
           disabled={entry.disabled}
+          aria-keyshortcuts={entry.shortcut?.aria}
           aria-haspopup={hasSub ? 'menu' : undefined}
           aria-expanded={hasSub ? subOpen : undefined}
           onFocus={hasSub ? () => { setOpenSubmenuId(entry.id) } : undefined}
@@ -438,11 +472,12 @@ export function Menu({ open, anchor, items = [], children, selectedId, selectedI
         >
           {entry.icon !== undefined && <span className={css.itemIcon}>{entry.icon}</span>}
           <span className={css.itemLabel}>{entry.label}</span>
+          {entry.shortcut !== undefined && <span aria-hidden="true" className={css.shortcut}><ShortcutKeys keys={entry.shortcut.keys} className={css.shortcutKeys} /></span>}
           {/* Selection marker is a trailing check (figma .Menu_cell) unless the fill mode carries it. */}
           {selected && selection === 'check' && <IconCheckOutlineRegular className={css.check} />}
         </button>
         {subOpen && entry.submenu !== undefined && (
-          <div className={clsx(css.submenu, compact && css.compactList)} role="menu">
+          <MenuSurface compact={compact} className={clsx(css.submenu, compact && css.compactList)} role="menu">
             {entry.submenu.map(sub => (
               <button
                 key={sub.id}
@@ -450,13 +485,15 @@ export function Menu({ open, anchor, items = [], children, selectedId, selectedI
                 role="menuitem"
                 className={css.item}
                 disabled={sub.disabled}
-                onClick={() => { onSelect?.(sub.id) }}
+                aria-keyshortcuts={sub.shortcut?.aria}
+                onClick={() => { onSelect?.(sub.id); refocusAfterSelection() }}
               >
                 {sub.icon !== undefined && <span className={css.itemIcon}>{sub.icon}</span>}
                 <span className={css.itemLabel}>{sub.label}</span>
+                {sub.shortcut !== undefined && <span aria-hidden="true" className={css.shortcut}><ShortcutKeys keys={sub.shortcut.keys} className={css.shortcutKeys} /></span>}
               </button>
             ))}
-          </div>
+          </MenuSurface>
         )}
       </div>
     )
@@ -478,7 +515,7 @@ export function Menu({ open, anchor, items = [], children, selectedId, selectedI
   // already at the final position (with getAnchorRect returning null the
   // list simply stays hidden).
   const list = open && (
-    <div
+    <MenuSurface compact={compact}
       ref={listRef}
       className={clsx(css.list, listClassName, dense && css.denseList, compact && css.compactList, scrollable && css.scrollable, portal && css.portal, side === 'top' && !portal && css.sideTop, align === 'end' && !portal && css.alignEnd)}
       style={portal ? fixedPos ?? MEASURE_STYLE : undefined}
@@ -506,7 +543,7 @@ export function Menu({ open, anchor, items = [], children, selectedId, selectedI
           {footer.map(renderEntry)}
         </div>
       )}
-    </div>
+    </MenuSurface>
   )
 
   // Pointer-leave dismissal watches the WRAPPER, not the list: React's

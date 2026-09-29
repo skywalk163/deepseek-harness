@@ -62,6 +62,8 @@ const ASSET_GLOBS = [
   'node_modules/@deepseek-ai/dsh-web-frontend/dist/**/*',
   // skill-badge resolves both Markdown and image resources through import.meta.url.
   'node_modules/@deepseek-ai/dsh-skill-badge/assets/**/*',
+  // The diagnosis provider extracts its PowerShell script for an external interpreter.
+  'node_modules/@deepseek-ai/dsh-sandbox-windows-acl/assets/**/*',
 ]
 
 const PLATFORMS = ['linux', 'macos', 'win'] as const
@@ -457,7 +459,7 @@ class SingleExeBuild {
     } else {
       const { version } = JSON.parse(await readFile(join(root, 'package.json'), 'utf8')) as { version: string }
       await preparePrimaryRuntime({ target: runtimeTarget, output: resources,
-        cache: join(tmpdir(), 'dsh-primary-runtime-downloads'), version, pythonOnly: true })
+        cache: join(tmpdir(), 'dsh-primary-runtime-downloads'), version })
       smokePrimaryRuntime(join(resources, 'primary-runtime'))
     }
     if (target.platform !== 'macos') return [product, ripgrep, office, resources]

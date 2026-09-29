@@ -164,7 +164,7 @@ describe('scope tree', () => {
     expect(b.mock.remote.session.projections).not.toHaveBeenCalled()
   })
 
-  it('publishes transient Assistant chunks and the named durable v2 settlement through one event source', async ({ bench }) => {
+  it('publishes the final Assistant message before retiring transient chunks at Step end', async ({ bench }) => {
     const b = bench()
     await feedList(b, [{ id: 's1' }])
     using _reference = b.svc.retain(sid('s1'), { source: 'controllerOperation' })
@@ -232,13 +232,20 @@ describe('scope tree', () => {
     })
     await b.mock.streams.drained(FOLLOW)
     await vi.waitFor(() => {
-      expect(binding.eventSource.getSnapshot().entries).toHaveLength(1)
+      expect(binding.eventSource.getSnapshot().entries).toHaveLength(2)
     })
 
     expect(publications).toEqual([
       ['assistant/live-chunk'],
-      ['assistant/message'],
+      ['assistant/live-chunk', 'assistant/message'],
     ])
+    b.mock.streams.push(FOLLOW, {
+      type: 'event', event: { type: 'step/end', seq: 1, time: 3, data: { turn: 1, step: 1 } },
+    })
+    await b.mock.streams.drained(FOLLOW)
+    expect(binding.eventSource.getSnapshot().entries.map(entry => entry.event.type))
+      .toEqual(['assistant/message', 'step/end'])
+    expect(binding.eventSource.getSnapshot().change).toEqual({ kind: 'settle-assistant', attemptId })
     dispose()
   })
 
@@ -373,10 +380,10 @@ describe('scope tree', () => {
     await b.mock.streams.drained(FOLLOW)
     await vi.waitFor(() => {
       expect(binding.eventSource.getSnapshot().entries.map(entry => entry.event.type))
-        .toEqual(['assistant/message', 'assistant/message'])
+        .toEqual(['assistant/message', 'assistant/live-chunk', 'assistant/message'])
     })
     expect(binding.eventSource.getSnapshot().change).toEqual({
-      kind: 'settle-assistant', attemptId: String(attemptId), entry: currentMessage,
+      kind: 'append', entries: [currentMessage],
     })
   })
 
@@ -976,8 +983,10 @@ describe('fork', () => {
     b.mock.remote.session.fork.mockResolvedValue(ok({ sessionId: sid('child') }))
     b.mock.remote.session.rename.mockResolvedValue(err(new RemoteError('session/title-invalid', 'rejected', { sessionId: sid('child') })))
 
-    await expect(b.svc.fork({ sessionId: sid('source'), increaseTitle: true }))
+    const onCreated = vi.fn()
+    await expect(b.svc.fork({ sessionId: sid('source'), increaseTitle: true, onCreated }))
       .rejects.toThrow('fork child rename failed: session/title-invalid: rejected')
+    expect(onCreated).toHaveBeenCalledExactlyOnceWith('child')
     expect(b.svc.list.getSnapshot().byId[sid('child')]).toBeDefined()
     expect(b.svc.binding(sid('child'))).toBeUndefined()
     expect(b.svc.retainInfo(sid('child')).getSnapshot().referenceCount).toBe(0)

@@ -8,14 +8,13 @@
     - tab "Trajectory"
 - text: Reply with a one-sentence description of event sourcing, then stop. {{clock}}
 - button "Copy"
-- status: Deep diving...
-- button "Deep diving for {{duration}}" [disabled] [expanded]
 - paragraph: partial
+- status: Deep diving...
+- text: Deep diving for {{duration}}...
 - list:
   - listitem:
     - text: Edited queue item
     - button "Edit queued message"
-    - tooltip "Edit queued message"
     - button "Remove queued message"
     - button "Steer queued message"
 - textbox "Cmd/Ctrl+Enter steers all queued messages"

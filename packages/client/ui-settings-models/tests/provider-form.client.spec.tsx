@@ -3,6 +3,7 @@
 import { within, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import Schema from '@deepseek-ai/schemastery'
+import { Context } from '@deepseek-ai/cordis'
 import { bindSnapshotSelector, RemoteError } from '@deepseek-ai/dsh-client-test-runtime'
 import type { SettingsNamespaceView } from '@deepseek-ai/dsh-api-remotes/client'
 import type { JsonValue } from '@deepseek-ai/dsh-util-values'
@@ -153,7 +154,9 @@ const contexts = new WeakMap<object, PageContext>()
 function ctxWith(face: object): PageContext {
   const existing = contexts.get(face)
   if (existing !== undefined) return existing
-  const ctx = { remote: face } as unknown as PageContext
+  const ctx = Object.assign(new Context(), { remote: { ...face,
+    session: { initializeDefaultModel: async () => ({ ok: true, value: undefined }) },
+  } })
   contexts.set(face, ctx)
   return ctx
 }
@@ -609,6 +612,8 @@ describe('endpoint interrogation', () => {
 
     fireEvent.click(screen.getByText(en.fetchModels))
     await screen.findByText(en.fetchTitle)
+    expect(screen.getByRole<HTMLInputElement>('checkbox', { name: 'fresh' }).checked).toBe(true)
+    expect(screen.queryByRole('checkbox', { name: 'Fresh' })).toBeNull()
     // The already-configured row starts unchecked; the new one starts checked.
     const boxes = [...document.querySelectorAll<HTMLInputElement>('input[type="checkbox"]')]
     expect(boxes.map(box => box.checked)).toEqual([false, true])
@@ -748,6 +753,8 @@ describe('endpoint interrogation', () => {
     fireEvent.click(screen.getByText(en.fetchModels))
     const dialog = await screen.findByRole('dialog')
     const search = screen.getByLabelText<HTMLInputElement>(en.fetchSearch)
+    expect(dialog.textContent).toContain('opaque-id')
+    expect(dialog.textContent).not.toContain('Beta Display')
     expect([...dialog.querySelectorAll<HTMLInputElement>('input[type="checkbox"]')]
       .map(box => box.checked)).toEqual([true, true, true])
 
@@ -755,8 +762,11 @@ describe('endpoint interrogation', () => {
     expect(dialog.textContent).toContain('alpha')
     expect(dialog.textContent).not.toContain('opaque-id')
 
-    // The display name is searchable even though adoption and the row use id.
     fireEvent.change(search, { target: { value: 'beta' } })
+    expect(dialog.textContent).toContain('opaque-id')
+    expect(dialog.textContent).not.toContain('alpha')
+
+    fireEvent.change(search, { target: { value: 'opaque' } })
     expect(dialog.textContent).toContain('opaque-id')
     expect(dialog.textContent).not.toContain('alpha')
 
@@ -850,6 +860,21 @@ describe('hand-declared providers', () => {
     )
     return { ...scripted, onClose }
   }
+
+  it('creates a custom provider without changing the default model', async () => {
+    const { face, mutate, set, onClose } = mountCard()
+    const initialize = vi.spyOn(ctxWith(face).remote.session, 'initializeDefaultModel')
+    fireEvent.change(screen.getByLabelText(en.customRoute), { target: { value: 'acme-gateway' } })
+    fireEvent.change(screen.getByLabelText(en.baseUrl), { target: { value: 'https://gateway.example/v1' } })
+    fireEvent.change(screen.getByLabelText(en.keyInput), { target: { value: 'test-key' } })
+    fireEvent.click(screen.getByRole('button', { name: en.addModel }))
+    fireEvent.change(screen.getByLabelText(`${en.modelId} 1`), { target: { value: 'model' } })
+    fireEvent.click(screen.getByText(en.create))
+    await waitFor(() => { expect(onClose).toHaveBeenCalledWith(true) })
+    expect(mutate).toHaveBeenCalledOnce()
+    expect(set).toHaveBeenCalledOnce()
+    expect(initialize).not.toHaveBeenCalled()
+  })
 
   it('writes the whole profile and the key under the derived reference', async () => {
     const { mutate, set, onClose } = mountCard()
