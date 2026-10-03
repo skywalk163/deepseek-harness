@@ -105,13 +105,15 @@ export type ModuleLoader = ModuleLoaderV1 | ModuleLoaderV2
 export namespace ModuleLoader {
   let _cachedLoader: ModuleLoader | undefined
 
+  // FreeBSD has no prebuilt node-addon-require-builtin; rely on the --expose-internals JS path.
   function requireInternal(id: string): any {
     const require = createRequire(import.meta.url)
-    if (process.execArgv.includes('--expose-internals')) {
+    if (process.platform === 'freebsd' || process.execArgv.includes('--expose-internals')) {
       try {
         return require(id)
       } catch {}
     }
+    if (process.platform === 'freebsd') return undefined
     try {
       return require('node-addon-require-builtin').requireBuiltin(id)
     } catch {}
