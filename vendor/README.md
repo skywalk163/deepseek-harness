@@ -58,6 +58,8 @@ Keep this log exhaustive — every divergence from upstream must be listed.
 
 23. **`loader/src/internal.ts` FreeBSD native-addon guard**: `requireInternal` returns the JS internal module via `require(id)` (or `undefined` when no `--expose-internals` flag is present) when `process.platform === 'freebsd'`, instead of requiring the native `node-addon-require-builtin` addon. FreeBSD has no prebuilt `.node` and the addon's runtime probing fails closed; this removes the `noUsableBindingError` crash-loop that occurred during `service dsh_web restart` when the first boot attempt had not yet loaded `--expose-internals`. Covered by the 0.88 `service dsh_web restart` smoke (two consecutive clean restarts, zero `noUsableBindingError` in the new log segment).
 
+24. **`loader/src/config/entry.ts` module identity**: retains each entry's raw import result as `moduleNamespace`, before plugin export normalization. HMR matches that object to Node's cached module namespace and updates it after a successful reload. `EntryTree.import()` keeps its existing arguments and return value; `loader/README.md` documents the additive field.
+
 ## Sync procedure
 
 To update a vendored package from upstream:
