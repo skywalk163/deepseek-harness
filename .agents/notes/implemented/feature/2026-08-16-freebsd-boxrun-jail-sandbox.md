@@ -6,7 +6,7 @@ English | [中文](2026-08-16-freebsd-boxrun-jail-sandbox.zh.md)
 
 ## Problem
 
-The original [sandbox decision](2026-07-06-sandbox.md) left `PLATFORM_CHAINS.freebsd` empty, so FreeBSD shipped without a confining backend and every confined mode failed closed with `SANDBOX_UNAVAILABLE` — the [FreeBSD runbook](../../../../FREEBSD.md) could only operate unconfined via `DSH_PERMISSION_MODE=danger-full-access`. FreeBSD has no bwrap, Landlock, Seatbelt, or Windows restricted-token runner; the jail(8) machinery is the native answer, but creating jails requires root and the service runs as an unprivileged user. The rung must govern the two file-effect modes — `read-only` (no writable root) and `workspace-write` (workspace root plus a backend-defined temp area) — with parity to the Linux bwrap profile, including the workspace as the command's working directory.
+The original [sandbox decision](../../archived/feature/2026-07-06-sandbox.md) left `PLATFORM_CHAINS.freebsd` empty, so FreeBSD shipped without a confining backend and every confined mode failed closed with `SANDBOX_UNAVAILABLE` — the [FreeBSD runbook](../../../../FREEBSD.md) could only operate unconfined via `DSH_PERMISSION_MODE=danger-full-access`. FreeBSD has no bwrap, Landlock, Seatbelt, or Windows restricted-token runner; the jail(8) machinery is the native answer, but creating jails requires root and the service runs as an unprivileged user. The rung must govern the two file-effect modes — `read-only` (no writable root) and `workspace-write` (workspace root plus a backend-defined temp area) — with parity to the Linux bwrap profile, including the workspace as the command's working directory.
 
 ## Decision
 

@@ -6,7 +6,7 @@ Status: implemented
 
 ## 问题
 
-最初的[沙箱决策](2026-07-06-sandbox.zh.md)将 `PLATFORM_CHAINS.freebsd` 留空，因此 FreeBSD 没有隔离后端，任何受限模式都会以 `SANDBOX_UNAVAILABLE` fail-closed——[FreeBSD 手册](../../../../FREEBSD.md) 只能靠 `DSH_PERMISSION_MODE=danger-full-access` 非隔离运行。FreeBSD 没有 bwrap、Landlock、Seatbelt 或 Windows 受限令牌 runner；jail(8) 是原生答案，但创建 jail 需要 root，而服务以非特权用户运行。该档必须约束两种文件效果模式——`read-only`（无可写根目录）与 `workspace-write`（工作区根目录 + 后端定义的临时区域）——并与 Linux 的 bwrap profile 保持对齐，包括把工作区作为命令的工作目录。
+最初的[沙箱决策](../../archived/feature/2026-07-06-sandbox.md)将 `PLATFORM_CHAINS.freebsd` 留空，因此 FreeBSD 没有隔离后端，任何受限模式都会以 `SANDBOX_UNAVAILABLE` fail-closed——[FreeBSD 手册](../../../../FREEBSD.md) 只能靠 `DSH_PERMISSION_MODE=danger-full-access` 非隔离运行。FreeBSD 没有 bwrap、Landlock、Seatbelt 或 Windows 受限令牌 runner；jail(8) 是原生答案，但创建 jail 需要 root，而服务以非特权用户运行。该档必须约束两种文件效果模式——`read-only`（无可写根目录）与 `workspace-write`（工作区根目录 + 后端定义的临时区域）——并与 Linux 的 bwrap profile 保持对齐，包括把工作区作为命令的工作目录。
 
 ## 决策
 
