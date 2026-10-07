@@ -122,19 +122,17 @@ patchedDependencies:
 # value and silently filters out every glibc/musl-native optional dependency.
 # `os`/`cpu` are additive to the *current* platform, so listing freebsd here does
 # NOT drop the host's own binaries; it only broadens which optional deps are kept.
+# pnpm downloads optional platform binaries for EVERY listed platform (union
+# semantics); the default is the current host only. Non-FreeBSD hosts (GitHub
+# CI linux-x64, macOS/Windows dev machines) match their own host natively, so
+# they need NO entry here. Only FreeBSD + the sharp WASM fallback (cpu axis)
+# are declared.
 supportedArchitectures:
   os:
     - freebsd
-    - linux
-    - darwin
-    - win32
   cpu:
     - x64
-    - arm64
     - wasm32
-  libc:
-    - glibc
-    - musl
 # Hoist every workspace + dependency package into the top-level node_modules so
 # the runtime loader's dynamic import('@deepseek-ai/dsh-client-ui-*') resolves.
 shamefullyHoist: true

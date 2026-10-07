@@ -61,7 +61,7 @@ chk() { # chk <标题> <最少匹配数> <shell 片段>
 
 chk "pnpm supportedArchitectures" 1 "git show :pnpm-workspace.yaml | grep supportedArchitectures"
 chk "  os 含 freebsd"             1 "git show :pnpm-workspace.yaml | grep freebsd"
-chk "  libc glibc/musl"           1 "git show :pnpm-workspace.yaml | grep glibc"
+chk "  cpu 含 wasm32"            1 "git show :pnpm-workspace.yaml | grep wasm32"
 chk "  shamefullyHoist"           1 "git show :pnpm-workspace.yaml | grep shamefullyHoist"
 chk "sharp packageExtensions"     1 "git show :pnpm-workspace.yaml | grep sharp"
 chk "package.json dsh:freebsd"    1 "git show :package.json | grep dsh:freebsd"
