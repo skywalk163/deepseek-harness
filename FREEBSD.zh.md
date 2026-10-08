@@ -163,6 +163,8 @@ git log --oneline -1   # 应看到 FreeBSD 移植相关提交
 
 > 不要克隆上游 `deepseek-ai/deepseek-harness`——FreeBSD 补丁尚未合并，上游缺这些修复。
 
+> **全新克隆不需要任何清理**，直接进第 7 步。只有「**在原地升级**」的 checkout 才要多做一步 `pnpm run clean`；见 7.1 节。
+
 ---
 
 ## 7. 安装依赖
@@ -173,9 +175,40 @@ pnpm install
 
 这一步会编译 `node-pty` 原生插件（依赖第 1 / 3 / 5 步的 gmake、python3、pkgconf、disturl）。若卡在 ETIMEDOUT 拉 Node 头文件，检查 `.npmrc` 的 `disturl` 与网络连通性。
 
+### 7.1 全新克隆 vs. 原地升级——命令顺序不同
+
+| 起点 | 命令顺序 |
+| --- | --- |
+| **全新克隆**（第 6 步） | `pnpm install` → `pnpm run build` |
+| **已有 checkout**：依赖是用**旧版本**装的，树是**在原地升级**的（`git pull` / merge / `git checkout` 到更新的 tag） | `pnpm install` → **`pnpm run clean`** → `pnpm run build` |
+
+第二种情况下 `clean` **不是可选项**。升级会删掉上游已退休的包（以 0.2.1-alpha.1 为例：`packages/e2b/*`、`packages/code-runtime/*`、`packages/examples/*`、`packages/client/{runtime,schema-form,web-react}`、`packages/host/apiproxy`、`packages/preset/agent-presets`、`packages/runtime-diagnostics/invariants`、`packages/session/session-persistence-sqlite`、`packages/settings/settings-file`、`packages/subagent/tool-subagent-report`、`packages/workflow/workflow-worker-thread`），但包内**被 gitignore 的** `node_modules/`、`lib/` 会让这些目录以**无 manifest 的壳**形式活下来。这种壳对 `git status` **不可见**（里面剩下的东西全被忽略），却仍会被构建的 workspace glob `packages/*/*` 匹配到；于是 `tsdown` 拿**最近的** `package.json`（仓库根）去解析它，构建以一条误导性报错死掉：
+
+```
+ ERROR  Error: [@deepseek-ai/dsh-root] Cannot find entry: ["lib/types/{index,startup}.js"]
+Error: build: build:lib exited with 1
+```
+
+（报错里的 `@deepseek-ai/dsh-root` 是**误导**——根包本身没问题，真凶是那个陈旧目录的 `cwd`，例如 `packages/client/runtime`。`tsdown` 用 `Promise.all` 汇总 workspace 配置，所以即使有一批坏壳，也只报**第一个**。）
+
+定位并清理：
+
+```sh
+# 列出没有 package.json 的包目录——这些就是元凶
+for d in packages/*/*/; do [ -f "$d/package.json" ] || echo "STALE: $d"; done
+
+pnpm run clean      # 上游 scripts/clean.ts 正是清这类残留的
+```
+
+`pnpm run clean`（`scripts/clean.ts`）会删除「没有 `package.json` 且只剩已知残渣（`node_modules`、`lib`、`.typecheck`）」的包目录；若其中含有未知文件，它会**拒绝执行并列出**该内容，而不是删除。注意 `clean` 还会抹掉所有 `*.tsbuildinfo`，于是下一次 `tsc -b` 变成全量重编——在 8GB 机器上可能触发排错表里的 OOM。想避开这点，可改为把列出的目录 `mv` 出仓库：效果等价，且保住增量状态。
+
+> 同一个 commit、同一份 `tsdown.config.ts`，不同机器仍可能表现不同。2026-10-07 三台机器都在 `e2bde389d5`：fb250 有 19 个陈旧壳（构建失败），1.5 有 2 个，0.88 一个都没有（构建正常）。**同一 commit 下 A 机能编、B 机编不过，先查有没有陈旧包壳**——不要去怀疑配置。
+
 ---
 
 ## 8. 构建
+
+如果你是在**原地升级**已有 checkout、而不是构建全新克隆，请先按 7.1 节走三步（`pnpm install` → `pnpm run clean` → `pnpm run build`）。
 
 改了源码后必须重新构建（web 命令只服务预编译产物 `apps/web/dist`）：
 
@@ -444,9 +477,12 @@ git -c core.hooksPath=/tmp/nohooks push <remote> <branch>
 | `tsc -b` 报 `error TS2305: ... has no exported member 'boxrunProfileArgs'`（host 构建） | 陈旧的 `boxrun.e2e.ts` 测试引用了已删除的符号，导致 `dsh-sandbox-local` 的 `lib/` 产不出、harness 回退到 boxrun | 临时 `mv` 该测试出目录，跑 `pnpm build:lib:host`，再还原。见 8.2 节。 |
 | web 启动时（仅 rc.d 路径）报 `EACCES: permission denied, mkdir '/.dsh/...'` | rc.d 以空 `$HOME`（默认 `/`）拉起命令 | `sysrc dsh_web_env="HOME=/home/skywalk"`；见 8.2 节。 |
 | 报 `flock is not supported on freebsd-x64`，界面显示"本轮运行失败"，**任何模式**（含极简模式）都会 | `@deepseek-ai/node-addon-system/flock` 只声明了 Linux/macOS 目标，而 `native/system/scripts/build.ts` 在 FreeBSD 上静默退出，插件从未被构建；而每次写会话都要取这个租约 | 本移植已修复：新增 `freebsd-x64` 平台包，并给构建脚本加了 FreeBSD 分支。执行 `git pull && pnpm install && pnpm run build:native-system`，然后重启服务（`service dsh_web restart`）。 |
+| `build:lib:host` 阶段报 `ERROR Error: [@deepseek-ai/dsh-root] Cannot find entry: ["lib/types/{index,startup}.js"]`，最终 `build: build:lib exited with 1` | **原地升级**留下「无 manifest 的包壳」（只剩被 gitignore 的 `node_modules/` + `lib/`）；它们仍匹配 workspace glob `packages/*/*`，于是 `tsdown` 把它解析到最近的 `package.json`（仓库根 `@deepseek-ai/dsh-root`）。`git status` 看不到它们，因为残留全是被忽略的内容 | 先跑 `for d in packages/*/*/; do [ -f "$d/package.json" ] || echo "STALE: $d"; done`，再 `pnpm run clean`（或把这些目录 `mv` 出仓库）。**全新克隆不会踩**——只影响原地升级。见 7.1 节。 |
 
 ---
 
 ## 14. 已验证项
 
 `node-pty` 原生编译通过；`sharp` 经 WASM 渲染；`pnpm run build` 完整跑通（`tsc -b` + `tsdown` + `vite`）；`dsh web` 在环回地址上以 HTTP 提供 UI。Node-API 的 `flock` 插件用系统 `cc` 从源码编译通过，其所属原生测试套件在 FreeBSD 上 **52/52** 全绿（`node --test native/system/test/flock.test.js native/system/test/package-matrix.test.js`），包含独立的 C oracle 加锁交叉验证与会话写租约（`SessionWriteLease`：获取、互斥、释放后移交）。
+
+2026-10-08 在 0.2.1-alpha.1 上重新验证了「干净克隆」路径（fb250，4 核 / 8GB，FreeBSD 15.x）：从 gitcode `git clone` → `pnpm install` → `pnpm run build` **全程零报错**（`build: recorded 355 client artifact(s) with 2 public value(s)`）；克隆 + 安装约 1 分钟（命中本地 pnpm store；冷 store 还要多下载约 1394 个包），构建约 11 分钟。同一天，一个仅仅**在原地升级**过的 checkout 在 `build:lib:host` 阶段失败，直到清掉陈旧包壳才通过（见 7.1 节）——差别在工作树，不在 commit。

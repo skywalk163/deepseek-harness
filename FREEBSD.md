@@ -163,6 +163,8 @@ git log --oneline -1   # should show a FreeBSD-port commit
 
 > Do not clone upstream `deepseek-ai/deepseek-harness` — the FreeBSD patches are not merged there and would be missing.
 
+> **A fresh clone needs no cleanup** — go straight to step 7. Only a checkout that is being **upgraded in place** needs the extra `pnpm run clean` step; see §7.1.
+
 ---
 
 ## 7. Install dependencies
@@ -173,9 +175,40 @@ pnpm install
 
 This compiles the `node-pty` native addon (needs gmake, python3, pkgconf, disturl from steps 1 / 3 / 5). If it hangs on ETIMEDOUT fetching Node headers, check `.npmrc`'s `disturl` and network connectivity.
 
+### 7.1 Fresh clone vs. in-place upgrade — the command order differs
+
+| Starting point | Command order |
+| --- | --- |
+| **Fresh clone** (step 6) | `pnpm install` → `pnpm run build` |
+| **Existing checkout** whose dependencies were installed from an **older** version and whose tree is upgraded **in place** (`git pull` / merge / `git checkout` a newer tag) | `pnpm install` → **`pnpm run clean`** → `pnpm run build` |
+
+`clean` is **not optional** in the second case. Upgrading deletes packages that upstream retired (in 0.2.1-alpha.1, for example `packages/e2b/*`, `packages/code-runtime/*`, `packages/examples/*`, `packages/client/{runtime,schema-form,web-react}`, `packages/host/apiproxy`, `packages/preset/agent-presets`, `packages/runtime-diagnostics/invariants`, `packages/session/session-persistence-sqlite`, `packages/settings/settings-file`, `packages/subagent/tool-subagent-report`, `packages/workflow/workflow-worker-thread`), but the **gitignored** `node_modules/` and `lib/` left inside them keep those directories alive as **manifest-less shells**. Such a shell is invisible to `git status` (everything remaining in it is ignored), yet it still matches the build's workspace glob `packages/*/*`, so `tsdown` resolves the directory against the *nearest* `package.json` — the repository root — and the build dies with a misleading error:
+
+```
+ ERROR  Error: [@deepseek-ai/dsh-root] Cannot find entry: ["lib/types/{index,startup}.js"]
+Error: build: build:lib exited with 1
+```
+
+(`@deepseek-ai/dsh-root` in that message is a red herring — the root package is fine. The real culprit is the stale directory's `cwd`, e.g. `packages/client/runtime`. `tsdown` collects workspace configs with `Promise.all`, so when several shells exist it still reports only the **first** one.)
+
+Find and clear them:
+
+```sh
+# list the manifest-less package directories — these are the culprits
+for d in packages/*/*/; do [ -f "$d/package.json" ] || echo "STALE: $d"; done
+
+pnpm run clean      # upstream scripts/clean.ts removes exactly this residue
+```
+
+`pnpm run clean` (`scripts/clean.ts`) deletes package directories that have no `package.json` and contain **only** known residue (`node_modules`, `lib`, `.typecheck`); if one of them holds an unknown file it **refuses and lists it** instead of deleting. Note that `clean` also wipes every `*.tsbuildinfo`, so the next `tsc -b` becomes a full recompile — on an 8 GB host that can hit the OOM in the troubleshooting table. To avoid it, `mv` the listed directories out of the repository instead: same effect, incremental build state preserved.
+
+> Same commit + same `tsdown.config.ts` can still behave differently across hosts. On 2026-10-07 three machines were all at `e2bde389d5`: fb250 had 19 stale shells (build failed), 1.5 had 2, 0.88 had none (build fine). **If one host builds and another fails at the same commit, check for stale package shells first** — do not go hunting for a configuration problem.
+
 ---
 
 ## 8. Build
+
+Upgrading an existing checkout in place rather than building a fresh clone? Run §7.1's three steps first (`pnpm install` → `pnpm run clean` → `pnpm run build`).
 
 After changing source you must rebuild (the web command only serves the prebuilt `apps/web/dist`):
 
@@ -445,9 +478,12 @@ git -c core.hooksPath=/tmp/nohooks push <remote> <branch>
 | `tsc -b` fails with `error TS2305: ... has no exported member 'boxrunProfileArgs'` (host build) | stale `boxrun.e2e.ts` test references a removed symbol; `lib/` for `dsh-sandbox-local` is not produced, harness falls back to boxrun | temporarily `mv` the test out, run `pnpm build:lib:host`, restore it. See §8.2. |
 | `EACCES: permission denied, mkdir '/.dsh/...'` at web start (only via rc.d) | rc.d launches with empty `$HOME` (defaults to `/`) | `sysrc dsh_web_env="HOME=/home/skywalk"`; see §8.2. |
 | `flock is not supported on freebsd-x64` — the UI reports a failed turn (`本轮运行失败`) in **every** mode, minimal included | `@deepseek-ai/node-addon-system/flock` declared only Linux/macOS targets, and `native/system/scripts/build.ts` exited silently on FreeBSD, so no addon was ever built; every session write needs that lease | Fixed in this fork: a `freebsd-x64` platform package plus a FreeBSD branch in the build script. Run `git pull && pnpm install && pnpm run build:native-system`, then restart the service (`service dsh_web restart`). |
+| `build:lib:host` dies with `ERROR Error: [@deepseek-ai/dsh-root] Cannot find entry: ["lib/types/{index,startup}.js"]`, finally `build: build:lib exited with 1` | an **in-place** upgrade left manifest-less package "shells" (only the gitignored `node_modules/` + `lib/` survived the package removal); they still match the workspace glob `packages/*/*`, so `tsdown` resolves them to the nearest `package.json` — the repo root, `@deepseek-ai/dsh-root`. `git status` shows nothing because the leftovers are ignored | `for d in packages/*/*/; do [ -f "$d/package.json" ] || echo "STALE: $d"; done`, then `pnpm run clean` (or `mv` those directories out of the repo). **A fresh clone is immune** — this only bites upgrade-in-place. See §7.1. |
 
 ---
 
 ## 14. Verified on FreeBSD
 
 `node-pty` compiles natively, `sharp` renders through WASM, `pnpm run build` completes (`tsc -b` + `tsdown` + `vite`), and `dsh web` serves the UI over HTTP on loopback. The Node-API `flock` addon builds from source with the system `cc`, and the native suite it belongs to passes on FreeBSD — 52/52 (`node --test native/system/test/flock.test.js native/system/test/package-matrix.test.js`), including the independent C-oracle lock cross-checks and the session write lease (`SessionWriteLease`: acquire, mutual exclusion, hand-over after release).
+
+The clean-clone path was re-verified on 2026-10-08 at 0.2.1-alpha.1 (fb250, 4 cores / 8 GB, FreeBSD 15.x): `git clone` from gitcode → `pnpm install` → `pnpm run build` finished with **no errors** (`build: recorded 355 client artifact(s) with 2 public value(s)`), taking ~1 minute for clone + install (warm pnpm store; a cold store also downloads ~1394 packages) and ~11 minutes for the build. On the same day, a checkout that had merely been **upgraded in place** failed at `build:lib:host` until its stale package shells were removed (§7.1) — the difference is the working tree, not the commit.
