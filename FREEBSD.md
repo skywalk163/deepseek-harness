@@ -347,6 +347,8 @@ sysrc dsh_web_env="HOME=/home/skywalk"    # added alongside dsh_web_enable=YES e
 service dsh_web restart
 ```
 
+Or skip the hand-editing entirely: `sh freebsd/install-service.sh` (§11.1) writes this variable — and the `dsh_web_user` that matches this checkout — for you.
+
 After this, `service dsh_web start` (the boot path) works and the running process shows `HOME=/home/skywalk`.
 
 > ⚠️ Any `service dsh_web ...` / `daemon` invocation that leaves a long-lived process will **swallow the SSH helper's command output** (the shell returns before the daemon detaches). Always verify the result with a **separate** status check (`pgrep -f dsh:freebsd`, `fetch -qo - http://127.0.0.1:3080`, count `SANDBOX_UNAVAILABLE` in the log) rather than trusting the start command's stdout.
@@ -404,9 +406,59 @@ On the FreeBSD box itself just open `http://127.0.0.1:3080`.
 
 ---
 
-## 11. Running as a service (restart script + rc.d)
+## 11. Running as a service (install script + rc.d)
 
 The repo ships path-independent helper scripts under `freebsd/` (they resolve the repo root from their own location, so clone anywhere). For a custom project directory, set `DSH_PROJECT_DIR` in the service env (see below) — the launcher `cd`s into it before starting, making it the default working directory for all commands.
+
+### 11.1 One-shot install — `freebsd/install-service.sh`
+
+```sh
+sh freebsd/install-service.sh                      # install → start → wait for the port → print the token URL
+sh freebsd/install-service.sh --with-jail-helper   # the same, plus build/install the setuid sandbox helper (§8.1)
+sh freebsd/install-service.sh --status             # what is installed right now, and whether it is up
+sh freebsd/install-service.sh --uninstall          # stop it, drop the rc.d script and the rc.conf variables
+sh freebsd/install-service.sh --help               # needs neither root nor a checkout
+```
+
+It is idempotent: an rc.d script that is already byte-identical is left in place, and `sysrc` only rewrites a variable whose value actually differs. Everything it can, it derives from the checkout rather than making you paste paths:
+
+| Value | Derived from | Written as |
+| --- | --- | --- |
+| repository root | the script's own location (`freebsd/…`), or `DSH_REPO=<path>` | `dsh_web_chdir` |
+| user to run as | `stat -f '%Su'` on the repo — **the owner of the checkout** | `dsh_web_user` |
+| that user's `HOME` | `pw usershow -n <user>` | `dsh_web_env="HOME=…"` |
+| the rc.d script | `freebsd/dsh_web.rcd` | `/usr/local/etc/rc.d/dsh_web` (`root:wheel`, mode `0555`) |
+
+Options: `--no-start` (install only), `--restart`, `--projectdir <path>`, `--port <n>` (default `3080`), `--user <name>` (override the derived owner), `--with-jail-helper`, `--danger-full-access` (escape hatch: adds `DSH_PERMISSION_MODE=danger-full-access` to the service environment — **this disables confinement**, so use it only where the jail helper cannot be installed), `--status`, `--uninstall`.
+
+Two things make the service work and are easy to get wrong by hand: **`dsh_web_user` must be the user that owns the checkout**, and **`HOME` must be pinned in `dsh_web_env`**.
+
+It preflights, so a broken install is visible before it is started: it looks for `pnpm` (for the service user), `node`, `bash`, a populated `node_modules/`, and a setuid jail helper — warning, but not aborting, when something is missing.
+
+> It must run as root, since it writes `/usr/local/etc/rc.d` and `/etc/rc.conf`. Invoked as a normal user it re-executes itself through `sudo(8)` or `doas(1)`.
+
+`service dsh_web start` deliberately blocks until the harness prints its auth token (up to `dsh_web_token_wait`, 180 s by default), so the first start after a fresh install or a merge can take a couple of minutes to return. That is the launcher waiting for the token, not a hang.
+
+### 11.2 The manual equivalent
+
+What the installer does, spelled out:
+
+```sh
+su - root
+cp freebsd/dsh_web.rcd /usr/local/etc/rc.d/dsh_web
+chmod 555 /usr/local/etc/rc.d/dsh_web
+sysrc dsh_web_enable=YES
+sysrc dsh_web_chdir="$(pwd)"                        # repo absolute path, filled automatically
+sysrc dsh_web_user="<the user that owns this checkout>"
+sysrc dsh_web_env="HOME=/home/<that user>"          # REQUIRED — see the EACCES row in §13
+sysrc dsh_web_projectdir="/home/skywalk/dswork"     # optional: default project dir
+service dsh_web start        # verify
+service dsh_web status
+```
+
+`dsh_web_user` is not cosmetic: it decides which account the daemon drops to, and `dsh_web_env` must carry that account's `HOME`.
+
+### 11.3 Helper scripts
 
 - `freebsd/dsh-web-run.sh` — launcher: no longer forces `DSH_PERMISSION_MODE` (defaults to the harness's confined mode so the jail sandbox engages; set it only to opt out), points `DSH_JAIL_RUN_BIN` at the helper (defaults to `/var/dsh-jail-run` on this read-only-`/usr` box), `cd`s into `DSH_PROJECT_DIR` (default repo root), and `exec`s `pnpm dsh:freebsd web`.
 - `freebsd/dsh-web-restart.sh` — one-shot control: `stop | start | restart | status` (default `restart`).
@@ -416,24 +468,11 @@ sh freebsd/dsh-web-restart.sh restart   # also: stop / start / status
 DSH_PROJECT_DIR=/home/skywalk/dswork sh freebsd/dsh-web-restart.sh restart   # with a project dir
 ```
 
-For boot-time autostart (needs root):
-
-```sh
-su - root
-cp freebsd/dsh_web.rcd /usr/local/etc/rc.d/dsh_web
-chmod 555 /usr/local/etc/rc.d/dsh_web
-sysrc dsh_web_enable=YES
-sysrc dsh_web_chdir="$(pwd)"          # repo absolute path, filled automatically
-sysrc dsh_web_projectdir="/home/skywalk/dswork"   # optional: default project dir
-service dsh_web start        # verify
-service dsh_web status
-```
-
-Notes:
+### 11.4 Notes
 
 - `pnpm` must be persisted (on this box at `/home/<user>/.local/bin/pnpm` v11.7.0); do not rely on a `/tmp/p117`-style path that `/tmp` cleanup would wipe on reboot.
 - The rc.d `pidfile` and log live inside the repo (`dsh_web.pid`, `dsh_web.log`) so they survive reboots and `/tmp` cleanup.
-- The rc.d service runs as the `dsh_web_user` (default `workbuddy`); change via `sysrc dsh_web_user=...` if you installed elsewhere.
+- The rc.d service runs as `dsh_web_user`. Its built-in default is `workbuddy`; on a checkout owned by anyone else, an unset `dsh_web_user` is why a hand-installed service refuses to come up. `install-service.sh` derives it for you.
 
 ---
 
@@ -476,6 +515,8 @@ git -c core.hooksPath=/tmp/nohooks push <remote> <branch>
 | `grep` / `glob` fail with `could not start its search command (ripgrep launch failed)` | `@vscode/ripgrep` ships no FreeBSD native binary, so its `rgPath` points at a missing file | `pkg install ripgrep`, then the `grep`/`glob` tools auto-fall-back to the system `rg` (or set `DSH_RIPGREP_PATH` to your `rg`). Fixed in code at `packages/fs/tool-fs-search/src/search-core.ts`. |
 | `bash` / `grep` run in `$HOME` (or the repo root) instead of the project you set in the task | the web fork does not yet wire the task "项目目录" field into `session.header.cwd`; the command cwd falls back to `process.cwd()` (where `dsh web` was launched) | set the project explicitly: launch with `DSH_PROJECT_DIR=/path/to/project`, or in the rc.d service `sysrc dsh_web_projectdir="/path/to/project"`. The `freebsd/dsh-web-run.sh` launcher `cd`s into it. |
 | `tsc -b` fails with `error TS2305: ... has no exported member 'boxrunProfileArgs'` (host build) | stale `boxrun.e2e.ts` test references a removed symbol; `lib/` for `dsh-sandbox-local` is not produced, harness falls back to boxrun | temporarily `mv` the test out, run `pnpm build:lib:host`, restore it. See §8.2. |
+| `service dsh_web start` → `dsh_web: not found`, even though `dsh_web_enable="YES"` is in `rc.conf` | only the rc.conf flag was set — the rc.d script itself was never installed on this host (fresh machine, or one where the installer was never run) | install it: `sh freebsd/install-service.sh` writes `/usr/local/etc/rc.d/dsh_web` plus the remaining rc.conf variables and then starts/verifies. `--no-start` installs without touching the running service. |
+| service comes up but cannot write into the repo (`dsh_web.pid` / `dsh_web.log`), or `su` fails outright | `dsh_web_user` is not the owner of the checkout (the rc.d default is `workbuddy`) | `sh freebsd/install-service.sh --status` shows the mismatched pair; re-running the installer derives `dsh_web_user` from the checkout owner. |
 | `EACCES: permission denied, mkdir '/.dsh/...'` at web start (only via rc.d) | rc.d launches with empty `$HOME` (defaults to `/`) | `sysrc dsh_web_env="HOME=/home/skywalk"`; see §8.2. |
 | `flock is not supported on freebsd-x64` — the UI reports a failed turn (`本轮运行失败`) in **every** mode, minimal included | `@deepseek-ai/node-addon-system/flock` declared only Linux/macOS targets, and `native/system/scripts/build.ts` exited silently on FreeBSD, so no addon was ever built; every session write needs that lease | Fixed in this fork: a `freebsd-x64` platform package plus a FreeBSD branch in the build script. Run `git pull && pnpm install && pnpm run build:native-system`, then restart the service (`service dsh_web restart`). |
 | `build:lib:host` dies with `ERROR Error: [@deepseek-ai/dsh-root] Cannot find entry: ["lib/types/{index,startup}.js"]`, finally `build: build:lib exited with 1` | an **in-place** upgrade left manifest-less package "shells" (only the gitignored `node_modules/` + `lib/` survived the package removal); they still match the workspace glob `packages/*/*`, so `tsdown` resolves them to the nearest `package.json` — the repo root, `@deepseek-ai/dsh-root`. `git status` shows nothing because the leftovers are ignored | `for d in packages/*/*/; do [ -f "$d/package.json" ] || echo "STALE: $d"; done`, then `pnpm run clean` (or `mv` those directories out of the repo). **A fresh clone is immune** — this only bites upgrade-in-place. See §7.1. |
@@ -487,3 +528,16 @@ git -c core.hooksPath=/tmp/nohooks push <remote> <branch>
 `node-pty` compiles natively, `sharp` renders through WASM, `pnpm run build` completes (`tsc -b` + `tsdown` + `vite`), and `dsh web` serves the UI over HTTP on loopback. The Node-API `flock` addon builds from source with the system `cc`, and the native suite it belongs to passes on FreeBSD — 52/52 (`node --test native/system/test/flock.test.js native/system/test/package-matrix.test.js`), including the independent C-oracle lock cross-checks and the session write lease (`SessionWriteLease`: acquire, mutual exclusion, hand-over after release).
 
 The clean-clone path was re-verified on 2026-10-08 at 0.2.1-alpha.1 (fb250, 4 cores / 8 GB, FreeBSD 15.x): `git clone` from gitcode → `pnpm install` → `pnpm run build` finished with **no errors** (`build: recorded 355 client artifact(s) with 2 public value(s)`), taking ~1 minute for clone + install (warm pnpm store; a cold store also downloads ~1394 packages) and ~11 minutes for the build. On the same day, a checkout that had merely been **upgraded in place** failed at `build:lib:host` until its stale package shells were removed (§7.1) — the difference is the working tree, not the commit.
+
+The service installer `freebsd/install-service.sh` (§11.1) was exercised end-to-end on 2026-10-09 on fb250 (FreeBSD 15.x, checkout owned by `skywalk` — i.e. deliberately *not* the rc.d default user):
+
+| Step | Result |
+| --- | --- |
+| `--help`, run as a normal user from a directory outside the checkout | prints usage, exit 0 |
+| `--status` against a pre-existing hand install | listed the rc.d script's owner/mode, all six rc.conf values, the helper (none), the listener and the live token |
+| re-run with `--no-start` | `rc.d script already current` and all four variables `(unchanged)` — idempotent |
+| `--no-start --danger-full-access` | rewrote `dsh_web_env` to `HOME=… DSH_PERMISSION_MODE=danger-full-access` |
+| `--uninstall` | stopped the service, removed the rc.d script and all four rc.conf variables, released `:3080` |
+| from-scratch install | installed `/usr/local/etc/rc.d/dsh_web` as `root:wheel 0555`, derived `dsh_web_user=skywalk` / `dsh_web_env=HOME=/home/skywalk` from the checkout, passed preflight, started the service and printed `OK: dsh_web is listening on 127.0.0.1:3080` plus the live auth URL — 8 s wall clock on a warm host |
+
+One bug surfaced and was fixed during that run: piping the `service` invocation into `sed` for indentation made the installer **block forever** — the daemonized harness child keeps the inherited stdout open, so the pipe never reaches EOF and the install looks hung although the service came up fine. The script now captures the command's output to a temporary file and replays it. (Same family as the ⚠️ note in §8.2.)

@@ -346,6 +346,8 @@ sysrc dsh_web_env="HOME=/home/skywalk"    # 与 dsh_web_enable=YES 等并列设�
 service dsh_web restart
 ```
 
+不想手改也行：`sh freebsd/install-service.sh`（§11.1）会把这个变量——以及与本 checkout 匹配的 `dsh_web_user`——一起写好。
+
 此后 `service dsh_web start`（即开机走的路径）正常，运行进程的环境里 `HOME=/home/skywalk`。
 
 > ⚠️ 任何会留下长驻进程的 `service dsh_web ...` / `daemon` 调用都会**吞掉 SSH helper 的命令回显**（shell 在 daemon 脱离前就返回了）。务必用**另一条独立命令**做状态核查（`pgrep -f dsh:freebsd`、`fetch -qo - http://127.0.0.1:3080`、统计日志里 `SANDBOX_UNAVAILABLE` 的次数），别信启动命令的 stdout。
@@ -403,9 +405,59 @@ ssh -L 3080:127.0.0.1:3080 <user>@<freebsd-host>
 
 ---
 
-## 11. 作为服务运行（重启用脚本 + rc.d）
+## 11. 作为服务运行（安装脚本 + rc.d）
 
 仓库自带路径无关的 helper 脚本（`freebsd/` 子目录，按自身位置推导仓库根，clone 到哪都行）。要自定义项目目录，在服务 env 里设 `DSH_PROJECT_DIR`（见下）——启动器会先 `cd` 进去，成为所有命令的默认工作目录。
+
+### 11.1 一键安装——`freebsd/install-service.sh`
+
+```sh
+sh freebsd/install-service.sh                      # 安装 → 启动 → 等端口 → 打印 token URL
+sh freebsd/install-service.sh --with-jail-helper   # 同上，并顺带编译安装 setuid 沙箱 helper（§8.1）
+sh freebsd/install-service.sh --status             # 看现在装了什么、是否在跑
+sh freebsd/install-service.sh --uninstall          # 停服务，删掉 rc.d 脚本与 rc.conf 变量
+sh freebsd/install-service.sh --help               # 不需要 root，也不需要处于仓库目录
+```
+
+它是幂等的：rc.d 脚本与模板逐字节相同时原地不动，`sysrc` 也只在值真的不同时才改写。能推导的都从仓库自身推导，不用你手填路径：
+
+| 值 | 来源 | 落到 |
+| --- | --- | --- |
+| 仓库根 | 脚本自身位置（`freebsd/…`），或 `DSH_REPO=<path>` | `dsh_web_chdir` |
+| 以哪个用户运行 | 对仓库目录取 `stat -f '%Su'` —— **checkout 的属主** | `dsh_web_user` |
+| 该用户的 `HOME` | `pw usershow -n <user>` | `dsh_web_env="HOME=…"` |
+| rc.d 脚本 | `freebsd/dsh_web.rcd` | `/usr/local/etc/rc.d/dsh_web`（`root:wheel`，`0555`） |
+
+可选参数：`--no-start`（只装不启）、`--restart`、`--projectdir <path>`、`--port <n>`（默认 `3080`）、`--user <name>`（覆盖推导出的属主）、`--with-jail-helper`、`--danger-full-access`（逃生舱：往服务 env 里加 `DSH_PERMISSION_MODE=danger-full-access`，**等于关掉沙箱隔离**，只在装不了 jail helper 的机器上用）、`--status`、`--uninstall`。
+
+有两件事决定服务能否跑起来，手工做时最容易错：**`dsh_web_user` 必须是 checkout 的属主**，**`dsh_web_env` 里必须钉住 `HOME`**。
+
+它还会做体检，让问题在启动前就暴露：找服务用户可用的 `pnpm`、`node`、`bash`、非空的 `node_modules/`、以及 setuid jail helper——缺了会告警，但不会中断安装。
+
+> 必须以 root 运行，因为它要写 `/usr/local/etc/rc.d` 和 `/etc/rc.conf`。用普通用户跑，它会自己经 `sudo(8)` 或 `doas(1)` 重新执行一遍。
+
+`service dsh_web start` 会**刻意阻塞**到 harness 打印出授权 token 为止（最长 `dsh_web_token_wait`，默认 180 秒），所以全新安装或合并上游之后的第一次启动，可能一两分钟才返回。那是启动器在等 token，不是卡死。
+
+### 11.2 手工等价操作
+
+安装脚本做的事，摊开写就是：
+
+```sh
+su - root
+cp freebsd/dsh_web.rcd /usr/local/etc/rc.d/dsh_web
+chmod 555 /usr/local/etc/rc.d/dsh_web
+sysrc dsh_web_enable=YES
+sysrc dsh_web_chdir="$(pwd)"                        # 仓库绝对路径，自动填入
+sysrc dsh_web_user="<本 checkout 的属主>"
+sysrc dsh_web_env="HOME=/home/<该用户>"             # 必填 —— 见 §13 的 EACCES 一行
+sysrc dsh_web_projectdir="/home/skywalk/dswork"     # 可选：默认项目目录
+service dsh_web start        # 验证
+service dsh_web status
+```
+
+`dsh_web_user` 不是装饰：它决定守护进程降权到哪个账号，而 `dsh_web_env` 必须带上那个账号的 `HOME`。
+
+### 11.3 Helper 脚本
 
 - `freebsd/dsh-web-run.sh`——启动器：不再强制 `DSH_PERMISSION_MODE`（默认走 harness 的受限模式以启用 jail 沙箱；只有要退出时才设它），把 `DSH_JAIL_RUN_BIN` 指向 helper（本机只读 `/usr` 下默认 `/var/dsh-jail-run`），cd 进 `DSH_PROJECT_DIR`（默认仓库根），`exec pnpm dsh:freebsd web`。
 - `freebsd/dsh-web-restart.sh`——一键控制：`stop | start | restart | status`（默认 `restart`）。
@@ -415,24 +467,11 @@ sh freebsd/dsh-web-restart.sh restart   # 也可：stop / start / status
 DSH_PROJECT_DIR=/home/skywalk/dswork sh freebsd/dsh-web-restart.sh restart   # 指定项目目录
 ```
 
-开机自启（需 root）：
+### 11.4 注意
 
-```sh
-su - root
-cp freebsd/dsh_web.rcd /usr/local/etc/rc.d/dsh_web
-chmod 555 /usr/local/etc/rc.d/dsh_web
-sysrc dsh_web_enable=YES
-sysrc dsh_web_chdir="$(pwd)"          # 仓库绝对路径，自动填入
-sysrc dsh_web_projectdir="/home/skywalk/dswork"   # 可选：默认项目目录
-service dsh_web start        # 验证
-service dsh_web status
-```
-
-注意：
-
-- `pnpm` 要持久化（本机在 `/home/workbuddy/.local/bin/pnpm` v11.7.0），别用 `/tmp/p117` 这类重启会被清的路径。
+- `pnpm` 要持久化（本机在 `/home/<user>/.local/bin/pnpm` v11.7.0），别用 `/tmp/p117` 这类重启会被清的路径。
 - rc.d 的 `pidfile` 与日志放在仓库内（`dsh_web.pid`、`dsh_web.log`）以避开 `/tmp` 清理、重启不丢。
-- rc.d 服务以 `dsh_web_user`（默认 `workbuddy`）运行；装到别处用 `sysrc dsh_web_user=...` 改。
+- rc.d 服务以 `dsh_web_user` 运行。它的内置默认值是 `workbuddy`；如果 checkout 属主是别人，没设 `dsh_web_user` 正是手工装的服务起不来的原因。`install-service.sh` 会自动推出来。
 
 ---
 
@@ -475,6 +514,8 @@ git -c core.hooksPath=/tmp/nohooks push <remote> <branch>
 | `grep` / `glob` 报 `could not start its search command (ripgrep launch failed)` | `@vscode/ripgrep` 在 FreeBSD 无原生二进制，其 `rgPath` 指向缺失文件 | `pkg install ripgrep`，`grep`/`glob` 工具会自动回退到系统 `rg`（或设 `DSH_RIPGREP_PATH` 指向你的 `rg`）。代码修复在 `packages/fs/tool-fs-search/src/search-core.ts`。 |
 | `bash` / `grep` 落在 `$HOME`（或仓库根）而非任务里设的项目目录 | 本 fork 尚未把任务的"项目目录"字段接进 `session.header.cwd`，命令 cwd 回退到 `process.cwd()`（即 `dsh web` 启动目录） | 显式指定项目：启动加 `DSH_PROJECT_DIR=/项目路径`，或在 rc.d 服务里 `sysrc dsh_web_projectdir="/项目路径"`。`freebsd/dsh-web-run.sh` 启动器会 cd 进去。 |
 | `tsc -b` 报 `error TS2305: ... has no exported member 'boxrunProfileArgs'`（host 构建） | 陈旧的 `boxrun.e2e.ts` 测试引用了已删除的符号，导致 `dsh-sandbox-local` 的 `lib/` 产不出、harness 回退到 boxrun | 临时 `mv` 该测试出目录，跑 `pnpm build:lib:host`，再还原。见 8.2 节。 |
+| `service dsh_web start` 报 `dsh_web: not found`，但 `rc.conf` 里明明有 `dsh_web_enable="YES"` | 只设了 rc.conf 开关，**rc.d 脚本本身从未装到这台机器上**（全新机器，或从没跑过安装脚本） | `sh freebsd/install-service.sh`：写好 `/usr/local/etc/rc.d/dsh_web` 与剩余 rc.conf 变量，然后启动并验证。只想装不想启就加 `--no-start`。 |
+| 服务起来了，但写不进仓库（`dsh_web.pid` / `dsh_web.log` 报错），或 `su` 直接失败 | `dsh_web_user` 不是 checkout 的属主（rc.d 内置默认是 `workbuddy`） | `sh freebsd/install-service.sh --status` 会把这对不匹配的值摆出来；重跑安装脚本即可从 checkout 属主推导出 `dsh_web_user`。 |
 | web 启动时（仅 rc.d 路径）报 `EACCES: permission denied, mkdir '/.dsh/...'` | rc.d 以空 `$HOME`（默认 `/`）拉起命令 | `sysrc dsh_web_env="HOME=/home/skywalk"`；见 8.2 节。 |
 | 报 `flock is not supported on freebsd-x64`，界面显示"本轮运行失败"，**任何模式**（含极简模式）都会 | `@deepseek-ai/node-addon-system/flock` 只声明了 Linux/macOS 目标，而 `native/system/scripts/build.ts` 在 FreeBSD 上静默退出，插件从未被构建；而每次写会话都要取这个租约 | 本移植已修复：新增 `freebsd-x64` 平台包，并给构建脚本加了 FreeBSD 分支。执行 `git pull && pnpm install && pnpm run build:native-system`，然后重启服务（`service dsh_web restart`）。 |
 | `build:lib:host` 阶段报 `ERROR Error: [@deepseek-ai/dsh-root] Cannot find entry: ["lib/types/{index,startup}.js"]`，最终 `build: build:lib exited with 1` | **原地升级**留下「无 manifest 的包壳」（只剩被 gitignore 的 `node_modules/` + `lib/`）；它们仍匹配 workspace glob `packages/*/*`，于是 `tsdown` 把它解析到最近的 `package.json`（仓库根 `@deepseek-ai/dsh-root`）。`git status` 看不到它们，因为残留全是被忽略的内容 | 先跑 `for d in packages/*/*/; do [ -f "$d/package.json" ] || echo "STALE: $d"; done`，再 `pnpm run clean`（或把这些目录 `mv` 出仓库）。**全新克隆不会踩**——只影响原地升级。见 7.1 节。 |
@@ -486,3 +527,16 @@ git -c core.hooksPath=/tmp/nohooks push <remote> <branch>
 `node-pty` 原生编译通过；`sharp` 经 WASM 渲染；`pnpm run build` 完整跑通（`tsc -b` + `tsdown` + `vite`）；`dsh web` 在环回地址上以 HTTP 提供 UI。Node-API 的 `flock` 插件用系统 `cc` 从源码编译通过，其所属原生测试套件在 FreeBSD 上 **52/52** 全绿（`node --test native/system/test/flock.test.js native/system/test/package-matrix.test.js`），包含独立的 C oracle 加锁交叉验证与会话写租约（`SessionWriteLease`：获取、互斥、释放后移交）。
 
 2026-10-08 在 0.2.1-alpha.1 上重新验证了「干净克隆」路径（fb250，4 核 / 8GB，FreeBSD 15.x）：从 gitcode `git clone` → `pnpm install` → `pnpm run build` **全程零报错**（`build: recorded 355 client artifact(s) with 2 public value(s)`）；克隆 + 安装约 1 分钟（命中本地 pnpm store；冷 store 还要多下载约 1394 个包），构建约 11 分钟。同一天，一个仅仅**在原地升级**过的 checkout 在 `build:lib:host` 阶段失败，直到清掉陈旧包壳才通过（见 7.1 节）——差别在工作树，不在 commit。
+
+2026-10-09 在 fb250（FreeBSD 15.x，checkout 属主是 `skywalk`，即**故意不等于** rc.d 默认用户）上对服务安装脚本 `freebsd/install-service.sh`（§11.1）做了端到端实测：
+
+| 步骤 | 结果 |
+| --- | --- |
+| 普通用户、在 checkout 之外的目录执行 `--help` | 正常打印用法，退出码 0 |
+| 对一份此前手工装好的服务执行 `--status` | 列出 rc.d 脚本的属主/权限、六个 rc.conf 配置值、helper（无）、监听状态与当前 token |
+| 加 `--no-start` 重跑 | `rc.d script already current`，四个变量全部 `(unchanged)` —— 幂等 |
+| `--no-start --danger-full-access` | 把 `dsh_web_env` 改写为 `HOME=… DSH_PERMISSION_MODE=danger-full-access` |
+| `--uninstall` | 停服、删掉 rc.d 脚本与四个 rc.conf 变量、释放 `:3080` |
+| 从零安装 | 把 `/usr/local/etc/rc.d/dsh_web` 装成 `root:wheel 0555`，从 checkout 推导出 `dsh_web_user=skywalk` / `dsh_web_env=HOME=/home/skywalk`，体检通过，启动服务并打出 `OK: dsh_web is listening on 127.0.0.1:3080` 与实时授权 URL —— 热机 8 秒完成 |
+
+这一轮暴露并修掉了一个 bug：把 `service` 命令**管道**进 `sed` 做缩进会让安装脚本**永久阻塞**——harness 被 daemon 化之后仍握着继承来的 stdout，管道永远等不到 EOF，于是「服务明明起来了，安装却像卡死」。脚本已改为把命令输出写进临时文件再回放。（与 8.2 节的 ⚠️ 提示同源。）
