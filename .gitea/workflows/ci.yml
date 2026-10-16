@@ -18,7 +18,7 @@
 # lib/styles/base.css — this is exactly the upstream `ci-primary` ordering.
 #
 # Verified on this exact box: pnpm install --frozen-lockfile, pnpm run build and
-# pnpm run check:ci:static all pass on FreeBSD 14.3 / Node 24 / pnpm 11.7.0.
+# pnpm run check:ci:static all pass on FreeBSD 14.3 / Node 24 / pnpm 11.28.5.
 #
 # Unit tests (`pnpm test`) are intentionally a separate opt-in job: the full
 # suite has ~60 FreeBSD-specific environment failures (e.g. @vscode/ripgrep

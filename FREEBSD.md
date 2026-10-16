@@ -67,12 +67,12 @@ pnpm v10 / v11 ships itself as a platform-native binary `@pnpm/exe-<os>-<arch>`.
 # Install globally (as root or your user). This installs the pure-JS launcher
 # pnpm.cjs that runs under node and does NOT perform the @pnpm/exe identity
 # check, so it succeeds on FreeBSD.
-npm install -g pnpm@11.7.0
+npm install -g pnpm@11.28.5
 ```
 
 > ⚠️ **Do not** run `corepack enable` or `corepack prepare pnpm@...`. corepack installs pnpm on the standalone native-binary path — that is exactly the route that triggers the error above.
 >
-> **Version note**: the repo's `package.json` pins `packageManager` to `pnpm@11.7.0`; aligning is recommended. But any **npm-installed** pnpm works (the box currently running 10.28.0 is also a JS launcher) — **method matters more than version**.
+> **Version note**: the repo's `package.json` pins `packageManager` to `pnpm@11.28.5`; aligning is recommended. But any **npm-installed** pnpm works (the box currently running 10.28.0 is also a JS launcher) — **method matters more than version**.
 
 Verify pnpm really is the JS launcher (the correct form):
 
@@ -88,7 +88,7 @@ If you already used corepack and are stuck on the error, clear the shim and rein
 
 ```sh
 corepack disable 2>/dev/null
-npm install -g pnpm@11.7.0
+npm install -g pnpm@11.28.5
 ```
 
 ---
@@ -470,7 +470,7 @@ DSH_PROJECT_DIR=/home/skywalk/dswork sh freebsd/dsh-web-restart.sh restart   # w
 
 ### 11.4 Notes
 
-- `pnpm` must be persisted (on this box at `/home/<user>/.local/bin/pnpm` v11.7.0); do not rely on a `/tmp/p117`-style path that `/tmp` cleanup would wipe on reboot.
+- `pnpm` must be persisted (on this box at `/home/<user>/.local/bin/pnpm` v11.28.5); do not rely on a `/tmp/p117`-style path that `/tmp` cleanup would wipe on reboot.
 - The rc.d `pidfile` and log live inside the repo (`dsh_web.pid`, `dsh_web.log`) so they survive reboots and `/tmp` cleanup.
 - The rc.d service runs as `dsh_web_user`. Its built-in default is `workbuddy`; on a checkout owned by anyone else, an unset `dsh_web_user` is why a hand-installed service refuses to come up. `install-service.sh` derives it for you.
 
@@ -502,7 +502,7 @@ git -c core.hooksPath=/tmp/nohooks push <remote> <branch>
 
 | Symptom | Cause | Fix |
 | --- | --- | --- |
-| `Cannot verify the identity of the @pnpm/exe.freebsd-x64 native binary: it is missing from pnpm-lock.yaml` | pnpm installed via corepack / standalone triggers the `@pnpm/exe` identity check; lockfile has no freebsd-x64 exe entry | **Use `npm install -g pnpm@11.7.0`** (JS launcher, no check); disable corepack. See step 2. |
+| `Cannot verify the identity of the @pnpm/exe.freebsd-x64 native binary: it is missing from pnpm-lock.yaml` | pnpm installed via corepack / standalone triggers the `@pnpm/exe` identity check; lockfile has no freebsd-x64 exe entry | **Use `npm install -g pnpm@11.28.5`** (JS launcher, no check); disable corepack. See step 2. |
 | `Could not load the "sharp" module using the freebsd-x64 runtime` | `sharp` has no FreeBSD native binary; WASM path not installed | Keep `supportedArchitectures` (`os: freebsd`, `cpu` includes `wasm32`) and the `sharp` `packageExtensions` in `pnpm-workspace.yaml`. |
 | `ERR_MODULE_NOT_FOUND` for `@deepseek-ai/dsh-client-ui-*` | workspace plugins not hoisted | Keep `shamefullyHoist: true` in `pnpm-workspace.yaml`. |
 | `--expose-internals is required for HMR service` | native-addon route unavailable on FreeBSD | Use the `dsh:freebsd` script (adds `--expose-internals`). Flag cannot go in `NODE_OPTIONS`. |

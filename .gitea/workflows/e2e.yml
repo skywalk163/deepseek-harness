@@ -8,7 +8,7 @@
 # Gitea specifics:
 #   * runs-on: freebsd (host runner fb5-freebsd — labels freebsd/freebsd-14.3/self-hosted)
 #   * checkout uses the local action repo (bare uses can intermittently resolve to github.com)
-#   * no pnpm/action-setup or actions/setup-node — the host has node 24 + pnpm 11.7.0 in /usr/local/bin
+#   * no pnpm/action-setup or actions/setup-node — the host has node 24 + pnpm 11.28.5 in /usr/local/bin
 #   * the bubblewrap install step is dropped — that is a Linux-only sandbox rung;
 #     FreeBSD's confinement is jail(2) and is proven in sandbox.yml
 #   * the job-level `if:` guards forks/dependabot like upstream

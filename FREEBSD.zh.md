@@ -67,12 +67,12 @@ pnpm v10 / v11 把自身打包成平台原生二进制 `@pnpm/exe-<os>-<arch>`�
 # 全局安装（root 或你的用户均可）。
 # 这会装成纯 JS 启动器 pnpm.cjs，运行于 node，
 # 不触发 @pnpm/exe 身份校验，所以在 FreeBSD 上能成功。
-npm install -g pnpm@11.7.0
+npm install -g pnpm@11.28.5
 ```
 
 > ⚠️ **不要**执行 `corepack enable` 或 `corepack prepare pnpm@...`。corepack 会把 pnpm 装成 standalone 原生二进制路径——那正是触发上面报错的那条路。
 >
-> **版本说明**：仓库 `package.json` 的 `packageManager` 固定为 `pnpm@11.7.0`，建议对齐；但只要是 **npm 安装的** pnpm（本机现跑的 10.28.0 也是 JS 启动器）都能用——**方法比版本更关键**。
+> **版本说明**：仓库 `package.json` 的 `packageManager` 固定为 `pnpm@11.28.5`，建议对齐；但只要是 **npm 安装的** pnpm（本机现跑的 10.28.0 也是 JS 启动器）都能用——**方法比版本更关键**。
 
 验证 pnpm 确实是 JS 启动器（正确形态）：
 
@@ -88,7 +88,7 @@ pnpm -v
 
 ```sh
 corepack disable 2>/dev/null
-npm install -g pnpm@11.7.0
+npm install -g pnpm@11.28.5
 ```
 
 ---
@@ -469,7 +469,7 @@ DSH_PROJECT_DIR=/home/skywalk/dswork sh freebsd/dsh-web-restart.sh restart   # �
 
 ### 11.4 注意
 
-- `pnpm` 要持久化（本机在 `/home/<user>/.local/bin/pnpm` v11.7.0），别用 `/tmp/p117` 这类重启会被清的路径。
+- `pnpm` 要持久化（本机在 `/home/<user>/.local/bin/pnpm` v11.28.5），别用 `/tmp/p117` 这类重启会被清的路径。
 - rc.d 的 `pidfile` 与日志放在仓库内（`dsh_web.pid`、`dsh_web.log`）以避开 `/tmp` 清理、重启不丢。
 - rc.d 服务以 `dsh_web_user` 运行。它的内置默认值是 `workbuddy`；如果 checkout 属主是别人，没设 `dsh_web_user` 正是手工装的服务起不来的原因。`install-service.sh` 会自动推出来。
 
@@ -501,7 +501,7 @@ git -c core.hooksPath=/tmp/nohooks push <remote> <branch>
 
 | 现象 | 原因 | 修复 |
 | --- | --- | --- |
-| `Cannot verify the identity of the @pnpm/exe.freebsd-x64 native binary: it is missing from pnpm-lock.yaml` | 用 corepack / standalone 装 pnpm，触发 `@pnpm/exe` 身份校验；lockfile 无 freebsd-x64 exe 条目 | **用 `npm install -g pnpm@11.7.0`**（JS 启动器，不校验）；禁用 corepack。见第 2 步。 |
+| `Cannot verify the identity of the @pnpm/exe.freebsd-x64 native binary: it is missing from pnpm-lock.yaml` | 用 corepack / standalone 装 pnpm，触发 `@pnpm/exe` 身份校验；lockfile 无 freebsd-x64 exe 条目 | **用 `npm install -g pnpm@11.28.5`**（JS 启动器，不校验）；禁用 corepack。见第 2 步。 |
 | `Could not load the "sharp" module using the freebsd-x64 runtime` | `sharp` 无 FreeBSD 原生二进制，需走 WASM | 保留 `pnpm-workspace.yaml` 的 `supportedArchitectures`（`os: freebsd`，`cpu` 含 `wasm32`）与 `sharp` `packageExtensions`。 |
 | `@deepseek-ai/dsh-client-ui-*` 报 `ERR_MODULE_NOT_FOUND` | 工作区插件未 hoist | 保留 `shamefullyHoist: true`。 |
 | `--expose-internals is required for HMR service` | FreeBSD 无 `node-addon-require-builtin` 预编译 | 用 `dsh:freebsd` 脚本（自带 `--expose-internals`）；不能放 `NODE_OPTIONS`。 |

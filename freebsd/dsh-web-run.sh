@@ -25,7 +25,7 @@ export DSH_JAIL_RUN_BIN="${DSH_JAIL_RUN_BIN:-/var/dsh-jail-run}"
 # launched from an interactive shell or at boot via rc.d (where PATH is
 # minimal). Do NOT rely on /tmp/p117-style paths.
 #
-# $HOME/.local/bin comes first on purpose: it holds the persisted pnpm 11.7.0
+# $HOME/.local/bin comes first on purpose: it holds the persisted pnpm 11.28.5
 # (matching packageManager in package.json). Without it, /usr/local/bin/pnpm
 # is used, which triggers pnpm's "manage-package-manager-versions" bootstrap
 # and re-downloads the same version into $HOME/.local/share/pnpm/.tools on
