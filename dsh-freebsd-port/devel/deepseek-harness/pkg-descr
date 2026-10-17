@@ -1,0 +1,15 @@
+DeepSeek Harness (dsh) is DeepSeek's open-source agent harness: a
+"everything is a plugin" coding agent with a CLI, a browser web UI, and a
+plugin/skill system.
+
+This port packages the FreeBSD-maintained fork, which adds the FreeBSD-only
+pieces the upstream release lacks:
+
+- a native flock(2) addon for the JSONL session store,
+- a FreeBSD process inspector and bash PTY fixes,
+- a FreeBSD jail sandbox backend (setuid dsh-jail-run helper),
+- ripgrep/bash path resolution and a loopback-only web trust fence.
+
+Run `dsh web` for the web UI (loopback-only; reach it through an SSH
+tunnel) or `service dsh_web start` for the boot-time service. See
+pkg-message after install for the full quick start.

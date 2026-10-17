@@ -1,0 +1,27 @@
+#!/bin/sh
+# dsh — DeepSeek Harness command-line entry (installed by the deepseek-harness port).
+#
+# The port ships a self-contained runtime tree under %%PREFIX%%/libexec/
+# deepseek-harness (a `pnpm deploy` closure: the CLI plus its production
+# dependency graph). This wrapper is the only supported way to start it.
+
+DSH_ROOT="%%PREFIX%%/libexec/deepseek-harness"
+DSH_ENTRY="${DSH_ROOT}/lib/bin.js"
+
+# The setuid jail helper that confines agent commands on FreeBSD. The local
+# sandbox provider resolves DSH_JAIL_RUN_BIN first; without it the harness
+# falls back to danger-full-access mode.
+DSH_JAIL_RUN_BIN="${DSH_JAIL_RUN_BIN:-%%PREFIX%%/libexec/dsh-jail-run}"
+export DSH_JAIL_RUN_BIN
+
+# www/node24 provides the plain `node` binary; keep a defensive fallback.
+PATH="/usr/local/bin:/usr/local/sbin:${PATH}"
+export PATH
+NODE=node
+command -v node >/dev/null 2>&1 || NODE=node24
+
+# --expose-internals is mandatory on FreeBSD: node-addon-require-builtin
+# ships no freebsd-x64 prebuild and no source fallback, so the flag is the
+# only route to the internal ESM loader the HMR service needs. It cannot be
+# moved into NODE_OPTIONS.
+exec "${NODE}" --expose-internals "${DSH_ENTRY}" "$@"
