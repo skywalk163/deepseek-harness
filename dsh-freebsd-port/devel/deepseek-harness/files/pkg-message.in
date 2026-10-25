@@ -1,0 +1,43 @@
+=======================================================================
+DeepSeek Harness (dsh) has been installed.
+
+QUICK START — CLI
+    dsh --help
+    dsh web                      # serves the web UI on 127.0.0.1:3080
+                                 # (prints a one-time token URL)
+
+WEB UI ACCESS — READ THIS FIRST
+    The harness only trusts loopback requests. Open the UI as
+        http://127.0.0.1:3080/?token=<token>
+    or from your workstation through an SSH tunnel:
+        ssh -L 3080:127.0.0.1:3080 <user>@<this-host>
+        then http://localhost:3080
+    Binding the UI to a LAN address, or putting it behind nginx/Caddy,
+    will NOT work for host-side file operations (the trust fence rejects
+    non-loopback Host headers) — this is a security design, not a bug.
+
+RUN AS A BOOT-TIME SERVICE
+    sysrc dsh_web_enable=YES
+    service dsh_web start        # prints the token URL
+    # State (config, sessions, tokens) lives in /var/db/dsh; point it
+    # somewhere else with `sysrc dsh_web_chdir=/path`, which also becomes
+    # the default cwd for agent commands. Other knobs: dsh_web_user,
+    # dsh_web_host, dsh_web_port, dsh_web_env, dsh_web_env_file.
+
+AGENT SANDBOX (FreeBSD jail backend)
+    A setuid helper is installed at
+    %%PREFIX%%/libexec/dsh-jail-run — it confines every agent command in
+    an ephemeral jail. Keep it root-owned and setuid; do not move or
+    chown it. If your site policy forbids setuid binaries, remove the
+    setuid bit: the harness then falls back to danger-full-access mode
+    (documented in FREEBSD.md in the fork repository).
+
+RUNTIME DEPENDENCIES (installed automatically)
+    node24, bash, ripgrep. bash is required — the terminal tool drives a
+    persistent bash PTY session. ripgrep powers the grep/glob tools.
+
+DOCS
+    Upstream:  https://github.com/deepseek-ai/deepseek-harness
+    Fork (FreeBSD notes, FREEBSD.md):
+               https://github.com/skywalk163/deepseek-harness
+=======================================================================
