@@ -1,0 +1,16 @@
+# Bilingual-pair consistency record for README.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write dsh-freebsd-port/README.md
+/dsh-freebsd-port-delivery-notes:
+  en: af9655289ce9317a
+  zh: 832fefc9266adb12
+/dsh-freebsd-port-delivery-notes/shape-decision-stated-up-front-to-avoid-misunderstanding:
+  en: f6d6aecd10cb87ab
+  zh: 2c333b67f5189e8b
+/dsh-freebsd-port-delivery-notes/file-layout:
+  en: 5b4a4230b2e857bb
+  zh: 17a8717df6c01c1f
+/dsh-freebsd-port-delivery-notes/status:
+  en: ee87f1f64a383d4f
+  zh: d11bc609691d166e

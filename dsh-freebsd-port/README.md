@@ -1,27 +1,32 @@
-# dsh FreeBSD Port — 交付说明
+# dsh FreeBSD Port — Delivery Notes
 
-把 FreeBSD 自维护版 deepseek-harness（dsh）打包成正式 FreeBSD port，让用户
-`make install` / `pkg install deepseek-harness` 即可使用。
+English | [中文](README.zh.md)
 
-## 形态决策（先说清楚，避免误会）
+Package the self-maintained FreeBSD build of deepseek-harness (dsh) as a proper
+FreeBSD port, so a user reaches a working install with `make install` /
+`pkg install deepseek-harness`.
 
-**port 目录里只有"安装程序"（Makefile/pkg-plist/rc.d/wrapper），没有任何源码**；
-distfile（自包含运行时包）在 `make fetch` 时从 GitHub 下载，gitcode 作中国镜像。
-这正是您要的模型。但** distfile 不是源码包，而是预构建的运行时闭包**，原因：
+## Shape decision (stated up front to avoid misunderstanding)
 
-1. FreeBSD ports 的**构建阶段禁止联网**——依赖要么来自 ports 树，要么打进
-   distfile。dsh 是 ~290 个 workspace 包的 pnpm monorepo，~1500 个 npm 依赖
-   （含 node-pty 原生补丁、sharp wasm、各平台原生包）在 ports 树里几乎不存在。
-2. 现场源码构建要 `pnpm install` + `pnpm run build`：**30+ 分钟、峰值 2–4GB
-   内存**。poudriere 集群构建器（8GB 内存、严格时限）会直接拒收，普通用户
-   `make install` 等半小时也不是体验。
-3. 先例：OnlyOffice、VS Code server 等复杂应用在 ports 里同样是"下载预构建
-   产物 + 安装"的形态。
+**The port directory holds only "installer" material (Makefile/pkg-plist/rc.d/wrapper), no source at
+all**; the distfile (self-contained runtime bundle) is downloaded from GitHub at `make fetch` time, with
+gitcode as the China mirror. This is exactly the model requested. But **the distfile is not a source
+tarball, it is a prebuilt runtime closure**, for these reasons:
 
-port 里唯一编译的东西是 `freebsd/dsh-jail-run.c`（setuid jail 助手，~600 行 C，
-只用 jail(2)，无外部依赖）。
+1. The FreeBSD ports **build phase forbids network access** — dependencies must come either from the ports
+   tree or be carried inside the distfile. dsh is a pnpm monorepo of ~290 workspace packages with ~1500
+   npm dependencies (including the node-pty native patch, sharp wasm, and per-platform native packages)
+   that barely exist in the ports tree.
+2. Building from source on site requires `pnpm install` + `pnpm run build`: **30+ minutes and a 2–4GB
+   peak memory footprint**. A poudriere cluster builder (8GB RAM, strict time limits) rejects it outright,
+   and a half-hour wait inside `make install` is not an experience either.
+3. Precedent: complex applications such as OnlyOffice and VS Code server take the same "download prebuilt
+   artifacts + install" shape in ports.
 
-## 文件布局
+The only thing compiled in the port is `freebsd/dsh-jail-run.c` (the setuid jail helper, ~600 lines of C,
+using jail(2) only, with no external dependencies).
+
+## File layout
 
 ```
 dsh-freebsd-port/
@@ -40,24 +45,25 @@ dsh-freebsd-port/
         └── dsh_web.in               rc.d 服务（吸收 1.5/0.88 全部实战教训）
 ```
 
-## 状态
+## Status
 
-- [x] 侦察：运行时闭包 = CLI 的 287 包生产依赖图（可达性分析证实 agent 核心栈全在内）
-- [x] port 骨架（Makefiles/rc.d/wrapper/pkg-message）
-- [x] distfile 生产脚本（pnpm deploy --legacy --prod + 开机冒烟 + tar + 碎片输出）
-- [x] 1.5 实跑验证 deploy 路线：`--legacy` 绕开 shared-lockfile 缺陷 + allowBuilds 失配；
-      home store 硬链零联网；node-pty 编译产物/flock addon/web dist 全部在位
-- [x] 发现并修复 peer 依赖缺失：dsh-app-boot 等把 cordis-plugin-group 声明为
-      peerDependencies，`pnpm deploy --prod` 不装——脚本用 node 从 workspace
-      源码目录（非 node_modules  symlink，那边有悬空链和环）补齐缺失包
-- [x] **修复 distfile 不可移植**：deploy 树里 workspace 包是"指向构建机源码仓库的
-      符号链接"，拷到别机悬空 → `dsh` 启动 `ERR_MODULE_NOT_FOUND`；脚本加"解引用"
-      步骤后重跑，distfile（62,207,174 B）在 1.5 上 `make install`+`dsh --help` 全绿
-- [x] 最终跑：冒烟绿 → **distinfo/pkg-plist 已回填**（SHA256 + SIZE + TIMESTAMP 在 distinfo）
-- [x] 1.5 真机 `make checksum/stage/check-plist` + `make install PREFIX=/tmp/dshtest` 实测全绿
-      （bin/dsh、etc/rc.d/dsh_web、setuid libexec/dsh-jail-run 均正确落地，
-      check-plist 报 "No pkg-plist issues found"）
-- [x] **本文档已归档到 `TASK-LOG-2026-10-18.md`**，并 push 到 gitea `skywalk/deepseek-harness`
-      （作为 `dsh-freebsd-port/` 子目录，0.88 机器 `git fetch` 即可接续）
-- [ ] GitHub release 托管 + gitcode 镜像（distfile 已生成但未上传，见 PORTING.md §3）
-- [ ] PORTING.md 中的提交清单（Bugzilla 提交）
+- [x] Reconnaissance: runtime closure = the 287-package production dependency graph of the CLI (reachability analysis confirms the whole agent core stack is inside)
+- [x] Port skeleton (Makefiles/rc.d/wrapper/pkg-message)
+- [x] Distfile production script (pnpm deploy --legacy --prod + boot smoke + tar + fragment output)
+- [x] Deploy route verified end to end on 1.5: `--legacy` sidesteps the shared-lockfile defect + allowBuilds mismatch;
+      home store hard links mean zero network; node-pty build output/flock addon/web dist all present
+- [x] Found and fixed missing peer dependencies: dsh-app-boot and others declare cordis-plugin-group as
+      peerDependencies, which `pnpm deploy --prod` does not install — the script fills the missing packages
+      from the workspace source directories with node (not from node_modules symlinks, which contain dangling links and cycles)
+- [x] **Fixed a non-portable distfile**: workspace packages in the deploy tree were "symlinks pointing back at the
+      build machine's source repo", so they dangled on any other machine → `dsh` died with `ERR_MODULE_NOT_FOUND`;
+      the script gained a "dereference" step and a re-run made the distfile (62,207,174 B) pass
+      `make install` + `dsh --help` on 1.5
+- [x] Final run: smoke green → **distinfo/pkg-plist filled in** (SHA256 + SIZE + TIMESTAMP are in distinfo)
+- [x] Real-machine `make checksum/stage/check-plist` + `make install PREFIX=/tmp/dshtest` on 1.5 all green
+      (bin/dsh, etc/rc.d/dsh_web, setuid libexec/dsh-jail-run all landed correctly,
+      check-plist reported "No pkg-plist issues found")
+- [x] **This document is archived in `TASK-LOG-2026-10-18.md`**, and pushed to gitea `skywalk/deepseek-harness`
+      (as the `dsh-freebsd-port/` subdirectory, so the 0.88 machine can just `git fetch` to continue)
+- [ ] GitHub release hosting + gitcode mirror (the distfile is built but not uploaded, see PORTING.md §3)
+- [ ] The submission checklist in PORTING.md (Bugzilla filing)

@@ -1,16 +1,16 @@
-# dsh FreeBSD Port — 产包 / 托管 / 测试 / 提交上游手册
+# dsh FreeBSD Port — Packaging / Hosting / Testing / Upstreaming Manual
 
-配套交付：`devel/deepseek-harness/`（port 本体）、
-`tools/make-port-distfile.sh`（distfile 生产脚本）。
-形态决策见 `README.md`。
+Companion deliverables: `devel/deepseek-harness/` (the port proper) and
+`tools/make-port-distfile.sh` (the distfile production script).
+The shape decision is described in `README.md`.
 
 ---
 
-## 1. 在 1.5 上产 distfile
+## 1. Producing the distfile on 1.5
 
-前置条件：仓库 `/home/workbuddy/github/deepseek-harness` 处于**已构建**状态
-（`lib/`、`apps/web/dist`、`native/system/packages/freebsd-x64/bin/system.node`
-都在）。**不要在构建进行中跑**——`clean` 窗口期会让预检失败（2026-10-17 实测踩到）。
+Precondition: the repository `/home/workbuddy/github/deepseek-harness` is in a **built** state
+(`lib/`, `apps/web/dist`, and `native/system/packages/freebsd-x64/bin/system.node`
+are all present). **Do not run it while a build is in progress** — the `clean` window makes the preflight fail (hit for real on 2026-10-17).
 
 ```sh
 # 上传并脱离启动（ssh_run.py --file 不传参；脚本无参即自行 detached，
@@ -22,61 +22,61 @@ python tools/ssh_run.py --file dsh-freebsd-port/tools/make-port-distfile.sh
 python dsh_ssh.py cmd 'tail -f /tmp/mkdist.log' - 60
 ```
 
-脚本依次做：
+The script does the following in order:
 
-1. **preflight** — 检查三处构建产物 + node/curl；打印 node/pnpm 版本。
-2. **deploy** — `pnpm --filter @deepseek-ai/dsh deploy --prod <stage>`：
-   CLI 的生产依赖闭包（~290 个 workspace 包 + npm 依赖，从 store 硬链）。
-   `--prod` 失败会自动退回全量（prod+dev）闭包重试。
-3. **fixups** — 前端 dist、freebsd-x64 原生 addon（若 deploy 漏带则从仓库补）、
-   LICENSE / THIRD_PARTY_NOTICES.md / `freebsd/dsh-jail-run.c`、清 tsbuildinfo。
-4. **冒烟** — 空闲 RAM ≥ 1.5GB 时，以 scratch HOME 在 127.0.0.1:3999 拉起
-   `node --expose-internals lib/bin.js web`，要求 90 秒内出现 token 行且
-   `GET /?token=...` 返回 **200**（内存不足则大声 SKIP，不阻塞产包）。
-5. **tar** — 所有权归一化为 root:wheel，`sha256 -q` 出校验值。
-6. **碎片** — `distinfo.fragment`（SHA256+SIZE 两行）和
-   `pkg-plist.fragment`（bundle 全文件清单，含特殊条目）。
+1. **preflight** — checks the three build artifacts plus node/curl; prints the node/pnpm versions.
+2. **deploy** — `pnpm --filter @deepseek-ai/dsh deploy --prod <stage>`:
+   the CLI's production dependency closure (~290 workspace packages plus npm dependencies, hard-linked from the store).
+   A failing `--prod` automatically retries with the full (prod+dev) closure.
+3. **fixups** — frontend dist, the freebsd-x64 native addon (copied from the repository if deploy omitted it),
+   LICENSE / THIRD_PARTY_NOTICES.md / `freebsd/dsh-jail-run.c`, and removal of tsbuildinfo.
+4. **smoke** — when free RAM is at least 1.5GB, start
+   `node --expose-internals lib/bin.js web` on 127.0.0.1:3999 with a scratch HOME, require a token line within 90 seconds and
+   **200** from `GET /?token=...` (insufficient memory means a loud SKIP that does not block packaging).
+5. **tar** — normalize ownership to root:wheel and obtain the checksum with `sha256 -q`.
+6. **fragments** — `distinfo.fragment` (SHA256+SIZE, two lines) and
+   `pkg-plist.fragment` (the full bundle file list, including the special entries).
 
-产物在 `/tmp/dsh-port-dist/`。**把两个 fragment 回填进 port 目录**
-（distinfo 再加一行 `TIMESTAMP = $(date +%s)`），然后进入下一步。
+Artifacts land in `/tmp/dsh-port-dist/`. **Copy both fragments back into the port directory**
+(add one more `TIMESTAMP = $(date +%s)` line to distinfo), then continue to the next step.
 
-## 2. 已知坑（2026-10-17 在 1.5 实测，按踩坑顺序）
+## 2. Known traps (observed on 1.5 on 2026-10-17, in the order they were hit)
 
-1. **stage 必须与 pnpm store 同文件系统**。store 在
-   `/home/workbuddy/.local/share/pnpm/store/v11`（zroot/home/workbuddy）；
-   stage 放 `/tmp`（zroot/tmp）时跨设备无法硬链，pnpm 会**静默改用
-   /tmp/.pnpm-store 并联网重下全部依赖**（npmmirror 超时就直接卡死）。
-   所以 `DSH_WORK` 默认在 home 下。
-2. **`pnpm deploy` 必须加 `--legacy`**（pnpm 11.28.5 实测）：
-   - 默认（新）实现遇 shared lockfile 直接失败，官方建议
-     `forceLegacyDeploy: true`；
-   - 新实现把 workspace 包解析成绝对 `file:///...`，仓库
-     `pnpm-workspace.yaml` 的 `allowBuilds` 键是相对
-     `file:packages/...` → 失配 → `strictDepBuilds` 把
-     `dsh-subprocess-local` 的 postinstall 变成硬错误
-     （ERR_PNPM_IGNORED_BUILDS）。
-   legacy 实现两个问题都没有，且仍走 home store 硬链（零联网）。
-3. **`deploy --prod` 不装 workspace 包的 peerDependencies**：
-   `dsh-app-boot` 把 `@deepseek-ai/cordis-plugin-group`（vendor/group）
-   声明为 peer，部署树缺它 → 一启动就
-   `ERR_MODULE_NOT_FOUND`。脚本用内嵌 `reconcile.mjs` 从 **workspace
-   源码目录**（按 package.json name 扫描，排除 node_modules/.git）补齐
-   —— **绝不能从 node_modules 拷贝**：那边有上游删除遗留的悬空
-   symlink（cp 报 ENOENT）和 symlink 环（cp -RL 报 cycle 并拷出
-   20 层嵌套 node_modules）。
-4. **部署树带 `uarch` 文件标志**（pnpm store 自 2026-09-11 起就有，
-   硬链继承；live 仓库 node_modules 同样带）。`rm -rf` 对它报
-   EPERM（"Operation not permitted"）——属主和 mode 都正常也没用。
-   清理前必须 `chflags -R 0`。**对 port 无影响**：tar/cpio 不存 BSD
-   fflags，distfile 与 pkg 产物是干净的。
-5. **冒烟要 detached + 自记录日志**：SSH 通道一断，前台脚本会被
-   SIGPIPE 杀；后台 node 若继承了通道 stdout 还会让 `stdout.read()`
-   水远不 EOF（假卡死）。脚本内 node 的重定向已隔离，外层再
-   nohup 自脱离。
-6. **不要在构建进行中跑**：`clean` 窗口期 `lib/` 会短暂消失，预检
-   直接 FATAL（先 `pgrep -fl 'tsc -b|pnpm run build'` 确认空闲）。
+1. **The stage must live on the same filesystem as the pnpm store**. The store is at
+   `/home/workbuddy/.local/share/pnpm/store/v11` (zroot/home/workbuddy);
+   a stage under `/tmp` (zroot/tmp) cannot be hard-linked across devices, so pnpm **silently switches to
+   /tmp/.pnpm-store and re-downloads every dependency over the network** (an npmmirror timeout simply hangs it).
+   That is why `DSH_WORK` defaults to a directory under home.
+2. **`pnpm deploy` requires `--legacy`** (verified with pnpm 11.28.5):
+   - the default (new) implementation fails outright on a shared lockfile, and the official advice is
+     `forceLegacyDeploy: true`;
+   - the new implementation resolves workspace packages to absolute `file:///...` paths while the repository's
+     `pnpm-workspace.yaml` keys `allowBuilds` relatively as
+     `file:packages/...` → mismatch → `strictDepBuilds` turns
+     the postinstall of `dsh-subprocess-local` into a hard error
+     (ERR_PNPM_IGNORED_BUILDS).
+   The legacy implementation has neither problem and still hard-links from the home store (zero network).
+3. **`deploy --prod` does not install workspace packages' peerDependencies**:
+   `dsh-app-boot` declares `@deepseek-ai/cordis-plugin-group` (vendor/group)
+   as a peer, the deploy tree lacks it → every start dies with
+   `ERR_MODULE_NOT_FOUND`. The script uses an embedded `reconcile.mjs` to fill the gap from the **workspace
+   source directories** (scanning by package.json name, excluding node_modules/.git)
+   — **never copy from node_modules**: that tree holds dangling
+   symlinks left behind by upstream deletions (cp reports ENOENT) and symlink cycles (cp -RL reports a cycle and emits
+   20 levels of nested node_modules).
+4. **The deploy tree carries the `uarch` file flag** (the pnpm store has set it since 2026-09-11,
+   and hard links inherit it; the live repository node_modules has it too). `rm -rf` reports
+   EPERM ("Operation not permitted") for it — a correct owner and mode make no difference.
+   Run `chflags -R 0` before cleaning. **This does not affect the port**: tar/cpio do not record BSD
+   fflags, so the distfile and the pkg artifacts are clean.
+5. **The smoke test must be detached and log itself**: the moment the SSH channel drops, a foreground script is killed by
+   SIGPIPE; and if the background node inherits the channel's stdout, `stdout.read()` never
+   reaches EOF (a fake hang). The node redirection inside the script is already isolated, and the outer layer adds
+   nohup for self-detachment.
+6. **Do not run it while a build is in progress**: during the `clean` window `lib/` briefly disappears and the preflight
+   goes straight to FATAL (first confirm idleness with `pgrep -fl 'tsc -b|pnpm run build'`).
 
-## 3. 托管 distfile（GitHub 主 + gitcode 中国镜像）
+## 3. Hosting the distfile (GitHub primary + gitcode China mirror)
 
 ```sh
 VER=0.2.1a4
@@ -87,16 +87,16 @@ gh release create freebsd-$VER \
   /tmp/dsh-port-dist/deepseek-harness-$VER-freebsd-amd64.tar.gz
 ```
 
-- Makefile 的 `MASTER_SITES` 已按 **GitHub 主源 + gitcode 镜像** 配好，ports 的
-  fetch 会按顺序尝试，中国用户自动走快的那个。
-- gitcode 是否镜像 release **附件**（不只是 tag 归档）需实测：上传后
+- The Makefile's `MASTER_SITES` is already configured for **GitHub primary + gitcode mirror**, so the ports
+  fetch tries them in order and Chinese users automatically take the faster one.
+- Whether gitcode mirrors release **attachments** (not just tag archives) needs a real test: after uploading,
   `curl -sI https://gitcode.com/skywalk163/deepseek-harness/releases/download/freebsd-0.2.1a4/deepseek-harness-0.2.1a4-freebsd-amd64.tar.gz`
-  应返回 200/302。若不镜像附件，就把 gitcode 那行 MASTER_SITES 去掉（或改为
-  指向 gitcode 的源码归档 + 另行托管 bundle）。
-- port 进树后，`distfiles.freebsd.org` 会自动缓存 distfile，最终用户（含中国）
-  实际从 FreeBSD 官方镜像下载，GitHub 只是冷启动来源。
+  should return 200/302. If attachments are not mirrored, drop the gitcode line from MASTER_SITES (or point it
+  at the gitcode source archive and host the bundle elsewhere).
+- Once the port is in the tree, `distfiles.freebsd.org` caches the distfile automatically, so end users (China included)
+  actually download from the official FreeBSD mirrors and GitHub is only the cold-start source.
 
-## 4. 本机验证（1.5 自带 /usr/ports）
+## 4. Local verification (the /usr/ports shipped with 1.5)
 
 ```sh
 # port 目录上传到 1.5: /tmp/dsh-port/devel/deepseek-harness
@@ -108,12 +108,12 @@ make -C /tmp/dsh-port/devel/deepseek-harness DISTDIR=$DISTDIR stage      # 全�
 make -C /tmp/dsh-port/devel/deepseek-harness DISTDIR=$DISTDIR check-plist
 ```
 
-关注点：
+Points to watch:
 
-- `make stage` 会产出 `${WRKDIR}/stage`——拿它和 `pkg-plist.fragment` 对账，
-  确认 `USE_RC_SUBR` 自动装了 `etc/rc.d/dsh_web` 且 plist 无需手写该行
-  （若报 plist 缺项/重复，按报错增删 `etc/rc.d/dsh_web` 一行即可）。
-- 真机安装验证（root）：
+- `make stage` produces `${WRKDIR}/stage` — reconcile it against `pkg-plist.fragment` and
+  confirm that `USE_RC_SUBR` installs `etc/rc.d/dsh_web` automatically and that the plist needs no hand-written line for it
+  (if the plist reports a missing or duplicate entry, add or remove that one `etc/rc.d/dsh_web` line as reported).
+- Real-machine install verification (root):
   ```sh
   make -C ... install
   /usr/local/bin/dsh --help                  # wrapper + --expose-internals
@@ -122,11 +122,11 @@ make -C /tmp/dsh-port/devel/deepseek-harness DISTDIR=$DISTDIR check-plist
   sysrc dsh_web_enable=YES && service dsh_web start   # rc.d + token 回显
   service dsh_web status
   ```
-- jail 助手单独验：`/usr/local/libexec/dsh-jail-run --workspace /tmp --mode read-only -- /bin/echo ok`
-  （在仓库里跑 `sh freebsd/run-verify.sh` 是 10/10 的完整判据，port 场景至少
-  要确认 setuid 位和路径解析）。
+- Verify the jail helper on its own: `/usr/local/libexec/dsh-jail-run --workspace /tmp --mode read-only -- /bin/echo ok`
+  (`sh freebsd/run-verify.sh` in the repository is the full 10/10 criterion; for the port at minimum
+  confirm the setuid bit and path resolution).
 
-## 5. 提交到 FreeBSD ports（Bugzilla）
+## 5. Submitting to FreeBSD ports (Bugzilla)
 
 ```sh
 cd /tmp/dsh-port/devel
@@ -134,56 +134,56 @@ tar czf ~/deepseek-harness-port.tar.gz deepseek-harness
 # 或 git 格式：在 ports git clone 里 commit 后 format-patch
 ```
 
-提交要点（写进 PR 描述，预答 reviewer）：
+Submission points (write them into the PR description and pre-answer the reviewer):
 
-1. **bundled node_modules 的正当性**：dsh 是 pnpm monorepo（~290 workspace
-   包），完整依赖闭包不在 ports 树；源码构建需 30+ 分钟 / 2–4GB RAM，
-   poudriere 集群不接受。distfile 内含 `THIRD_PARTY_NOTICES.md`，
-   `LICENSE=MIT` + `LICENSE_FILE`。
-2. **setuid 二进制**：`libexec/dsh-jail-run`（4755 root:wheel）是 FreeBSD
-   jail 沙箱后端的必要部件，代码在 distfile 内（`freebsd/dsh-jail-run.c`），
-   安全模型见文件头注释（jail 内降权为调用者 uid、workspace 路径校验）。
-3. **category=devel**：AI 编程 agent 工具链；若 portmgr 建议换类再 repocopy。
-4. **版本**：`DISTVERSION=0.2.1a4` → 框架导出 `PORTVERSION=0.2.1.a4`
-   （Porter's Handbook 预发布版规则：首字母 + 点，后续数字不加点）。
-5. **ONLY_FOR_ARCHS=amd64**：distfile 内含 amd64 原生 addon；aarch64 包
-   已在路线图上（见 §5）。
-6. **loopback 围栏**：Web UI 只信任 loopback（安全设计），pkg-message 已
-   写明 SSH 隧道用法——这不是 bug，是预期行为。
+1. **The legitimacy of bundled node_modules**: dsh is a pnpm monorepo (~290 workspace
+   packages) whose full dependency closure is not in the ports tree; a source build needs 30+ minutes and 2–4GB of RAM,
+   which poudriere clusters do not accept. The distfile contains `THIRD_PARTY_NOTICES.md`,
+   and the port sets `LICENSE=MIT` plus `LICENSE_FILE`.
+2. **The setuid binary**: `libexec/dsh-jail-run` (4755 root:wheel) is a necessary part of the FreeBSD
+   jail sandbox backend; its code ships inside the distfile (`freebsd/dsh-jail-run.c`), and
+   the security model is documented in the file header comments (dropping to the caller's uid inside the jail, workspace path validation).
+3. **category=devel**: AI coding agent toolchain; repocopy later if portmgr suggests another category.
+4. **Version**: `DISTVERSION=0.2.1a4` → the framework derives `PORTVERSION=0.2.1.a4`
+   (Porter's Handbook pre-release rule: letter plus dot first, subsequent digits without a dot).
+5. **ONLY_FOR_ARCHS=amd64**: the distfile carries the amd64 native addon; an aarch64 package
+   is already on the roadmap (see §5).
+6. **The loopback fence**: the Web UI trusts loopback only (a security design), and pkg-message already
+   documents SSH tunnel usage — this is not a bug but expected behaviour.
 
-## 6. 后续路线
+## 6. Roadmap
 
-- **aarch64**：在 aarch64 FreeBSD 机上跑同一脚本产
-  `deepseek-harness-<ver>-freebsd-aarch64.tar.gz`，Makefile 改
-  `DISTFILES= ${PORTNAME}-${DISTVERSION}-freebsd-${ARCH}.tar.gz` 并去掉
-  `ONLY_FOR_ARCHS`。
-- **CI 自动化**：gitea（1.5）加一个 workflow，tag 推送时自动跑
-  `make-port-distfile.sh` 并上传 release——消除"在 1.5 手跑"这一步。
-- **版本升级**：fork 发新版 → 重跑脚本 → 更新 distinfo + DISTVERSION →
-  三远端推送 → 更新 PR。`fork-after-upstream-*` 基线 tag 即版本锚点。
-- **考虑拆 port**：若 portmgr 对体积有异议，可把 jail 助手拆成独立小 port
-  （`devel/dsh-jail-run`），主 port 改为依赖它。
+- **aarch64**: run the same script on an aarch64 FreeBSD machine to produce
+  `deepseek-harness-<ver>-freebsd-aarch64.tar.gz`, change the Makefile to
+  `DISTFILES= ${PORTNAME}-${DISTVERSION}-freebsd-${ARCH}.tar.gz` and drop
+  `ONLY_FOR_ARCHS`.
+- **CI automation**: add a gitea (1.5) workflow that runs
+  `make-port-distfile.sh` on tag pushes and uploads the release — eliminating the "run it by hand on 1.5" step.
+- **Version upgrades**: the fork publishes a new release → re-run the script → update distinfo and DISTVERSION →
+  push to the three remotes → update the PR. The `fork-after-upstream-*` baseline tag is the version anchor.
+- **Consider splitting the port**: if portmgr objects to the size, split the jail helper into a small standalone port
+  (`devel/dsh-jail-run`) and make the main port depend on it.
 
-## 7. 本机 port 构建 / 校验实战踩坑（2026-10-18）
+## 7. Hands-on traps from building and verifying the port locally (2026-10-18)
 
-port 本体与 distfile 跑通后，在 1.5 自带 `/usr/ports` 做本机校验时踩的坑。完整操作存档见
-`TASK-LOG-2026-10-18.md`，这里只列判据与结论。
+The traps hit while verifying locally against the `/usr/ports` shipped with 1.5, after the port proper and the distfile were working.
+The full session record is in `TASK-LOG-2026-10-18.md`; only the criteria and conclusions are listed here.
 
-1. **`make install` 必须 root**：ports 惯例会 `su` 切 root，普通用户直接跑报 `su: Sorry`。
-   用 `ssh_run.py --sudo` 在远端以 root 执行。
-2. **`pkg-plist` 不能写 `#` 注释行**：`check-plist` 不认，直接报错 → 删除。
-3. **不要手写 `@stopdaemon dsh_web`**：`USE_RC_SUBR=dsh_web` 框架自动注入该关键字，
-   手写反而重复导致 check-plist 失败。
-4. **`stopdaemon` 关键字在本机 ports 树缺失**：测试环境若缺
-   `/usr/ports/Keywords/stopdaemon.ucl`，`make install` 报
-   `unknown keyword stopdaemon`。正式 ports 树自带；测试机补一个只含
-   `post-install`（调 `service %@ onestop`）的 `stopdaemon.ucl` 即可
-   —— **别带 `actions: [file, dir]`**，否则 pkg 把 `dsh_web` 当文件路径 stat 而失败。
-5. **验证链路（绿）**：`make checksum` → `make stage` →
-   `make check-plist`（"No pkg-plist issues found"）→
-   `make install PREFIX=/tmp/dshtest`（root）落地 `bin/dsh` / `etc/rc.d/dsh_web`
-   / setuid `libexec/dsh-jail-run`（4755 root:wheel），`dsh --help` 正常。
-   0.88 机器接续步骤见 `TASK-LOG-2026-10-18.md` §6。
-6. **跨机传 port 文件别用 4.8MB heredoc 脚本**：SSH 通道会 PipeTimeout 超时。
-   改用 `tools/port_push.py`（`sftp.put()` 直传真实文件 + `mkdir -p` 建目录）。
-   （`install-port-files.sh` 是过时传输产物，已不进仓库。）
+1. **`make install` must run as root**: ports convention `su`s to root, so running it as a normal user reports `su: Sorry`.
+   Use `ssh_run.py --sudo` to execute remotely as root.
+2. **`pkg-plist` must not contain `#` comment lines**: `check-plist` does not accept them and fails outright → delete them.
+3. **Do not hand-write `@stopdaemon dsh_web`**: the `USE_RC_SUBR=dsh_web` framework injects that keyword automatically, and
+   writing it by hand only duplicates it and fails check-plist.
+4. **The `stopdaemon` keyword is missing from the local ports tree**: if the test environment lacks
+   `/usr/ports/Keywords/stopdaemon.ucl`, `make install` reports
+   `unknown keyword stopdaemon`. The official ports tree ships it; for a test machine, add a `stopdaemon.ucl` that contains only
+   `post-install` (calling `service %@ onestop`)
+   — **do not give it `actions: [file, dir]`**, or pkg will stat `dsh_web` as a file path and fail.
+5. **The verification chain (green)**: `make checksum` → `make stage` →
+   `make check-plist` ("No pkg-plist issues found") →
+   `make install PREFIX=/tmp/dshtest` (root) lands `bin/dsh` / `etc/rc.d/dsh_web`
+   / the setuid `libexec/dsh-jail-run` (4755 root:wheel), and `dsh --help` works.
+   The steps for continuing on the 0.88 machine are in `TASK-LOG-2026-10-18.md` §6.
+6. **Do not move port files across machines with a 4.8MB heredoc script**: the SSH channel times out with PipeTimeout.
+   Use `tools/port_push.py` instead (`sftp.put()` transfers the real files plus `mkdir -p` for directories).
+   (`install-port-files.sh` is an obsolete transfer artifact that no longer enters the repository.)
