@@ -47,3 +47,8 @@ worktrees/
 .agents/worktrees/
 .typert-*/
 native/system/test/bin/
+
+# dsh web service runtime state (rc.d writes these next to the repo when
+# dsh_web_chdir points at the checkout; see freebsd/dsh_web.rcd)
+dsh_web.log
+dsh_web.pid
