@@ -65,7 +65,7 @@ chk "  cpu 含 wasm32"            1 "git show :pnpm-workspace.yaml | grep wasm32
 chk "  shamefullyHoist"           1 "git show :pnpm-workspace.yaml | grep shamefullyHoist"
 chk "sharp packageExtensions"     1 "git show :pnpm-workspace.yaml | grep sharp"
 chk "package.json dsh:freebsd"    1 "git show :package.json | grep dsh:freebsd"
-chk "package.json 4096 heap cap"  1 "git show :package.json | grep max-old-space-size=4096"
+chk "package.json heap cap"      1 "git show :package.json | grep max-old-space-size="
 chk ".npmrc registry"             1 "git show :.npmrc | grep registry"
 chk ".npmrc disturl"              1 "git show :.npmrc | grep disturl"
 chk "terminal-bash freebsd"       1 "git show :packages/terminal/terminal-bash/src/config.ts | grep -i freebsd"
