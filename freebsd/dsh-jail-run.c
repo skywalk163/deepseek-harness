@@ -369,6 +369,21 @@ int main(int argc, char **argv) {
 
   if (pid == 0) {
     /* Child: enter the jail, drop privileges, run the command. */
+    /* jail_attach() performs a chroot(2) internally, and chroot(2) fails with
+     * EPERM when the calling process holds an OPEN DIRECTORY DESCRIPTOR (see
+     * jail(2) ERRORS). A long-lived parent (the harness runs this helper from
+     * its own node process, spawned detached) can leave directory handles
+     * inherited across exec — on 0.88 that turned every confined command into
+     * "jail_attach: Operation not permitted". Close directory descriptors in
+     * the child before attaching; files, pipes and sockets are left alone. */
+    {
+      int maxfd = getdtablesize();
+      if (maxfd > 65536) maxfd = 65536;
+      for (int fd = 0; fd < maxfd; fd++) {
+        struct stat st;
+        if (fstat(fd, &st) == 0 && S_ISDIR(st.st_mode)) close(fd);
+      }
+    }
     if (jail_attach(g_jid) != 0) {
       fprintf(stderr, "dsh-jail-run: jail_attach: %s\n", strerror(errno));
       _exit(DENY_RC);
