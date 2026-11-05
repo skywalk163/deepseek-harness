@@ -177,6 +177,7 @@ function sandboxUnavailableHint(): string {
   return 'Install bubblewrap or run a Landlock-enforcing kernel (Linux), ensure sandbox-exec '
     + 'is usable (macOS), or ensure the ACL restricted-token runner can start (Windows) '
     + '— otherwise switch the consumer to danger-full-access.'
+}
 
 /** The selected backend is available but cannot enforce the requested policy. */
 export class SandboxUnsupportedPolicyError extends HarnessError {
