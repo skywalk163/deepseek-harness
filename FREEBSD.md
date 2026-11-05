@@ -216,6 +216,8 @@ After changing source you must rebuild (the web command only serves the prebuilt
 pnpm run build     # = build:lib (tsc -b + tsdown) + build:web (vite)
 ```
 
+> **Since `dsh-v0.2.2-rc.1` the host half is `tsx scripts/compile-referenced-projects.ts host-libraries && tsc -p tsconfig.host.json`, and the client bundle (`tsdown`) peaks well above 4 GiB.** The fork pins `--max-old-space-size=8192` on both `build:lib:host` and `build:lib:client`, plus `NODE_OPTIONS=--max-old-space-size=8192` for the `tsdown` half (a separate process that does not inherit the `node` flag). With the old 4 GiB cap the build dies as `exit 134` with `FATAL ERROR: Ineffective mark-compacts near heap limit — JavaScript heap out of memory`: that is a **V8 heap cap**, *not* the kernel OOM killer (which shows up as `exit 137` plus `was killed` in `/var/log/messages`). Upstream also now declares `engines.node >= 24.9.0`; the port still builds and runs on Node 22, but `pnpm install` prints an `Unsupported engine` warning — moving to `node24` means recompiling the node-pty and `flock` native addons.
+
 `pnpm run build` also runs `build:native-system`, which on FreeBSD now compiles
 the Node-API `flock` addon into `native/system/packages/freebsd-x64/bin/system.node`
 from the shared `flock.c` source (FreeBSD has `flock(2)`; no Landlock, no

@@ -216,6 +216,8 @@ pnpm run clean      # 上游 scripts/clean.ts 正是清这类残留的
 pnpm run build     # 等价于 build:lib (tsc -b + tsdown) + build:web (vite)
 ```
 
+> **从 `dsh-v0.2.2-rc.1` 起，host 半边改成 `tsx scripts/compile-referenced-projects.ts host-libraries && tsc -p tsconfig.host.json`，client 打包（`tsdown`）峰值远超 4 GiB。** fork 把 `build:lib:host` 与 `build:lib:client` 的堆上限都钉在 `--max-old-space-size=8192`，另外给 client 的 `tsdown` 单独加 `NODE_OPTIONS=--max-old-space-size=8192`（tsdown 是独立进程，不继承 `node` 的那个 flag）。用旧的 4 GiB 上限会以 `exit 134` + `FATAL ERROR: Ineffective mark-compacts near heap limit — JavaScript heap out of memory` 失败：那是 **V8 堆上限**，不是内核 OOM killer（后者表现为 `exit 137`，并在 `/var/log/messages` 里留下 `was killed`）。另外上游已把 `engines.node` 要求抬到 `>= 24.9.0`；本移植在 Node 22 上仍能构建与运行，只是 `pnpm install` 会打印 `Unsupported engine` 警告 —— 真升到 `node24` 需要重编 node-pty 与 `flock` 原生插件。
+
 `pnpm run build` 还会跑 `build:native-system`：在 FreeBSD 上它现在会用共用的
 `flock.c` 源码，把 Node-API 的 `flock` 插件编译到
 `native/system/packages/freebsd-x64/bin/system.node`（FreeBSD 自带 `flock(2)`；
