@@ -9,6 +9,8 @@ overrides:
   '@deepseek-ai/cosmokit': link:vendor/cosmokit
   '@deepseek-ai/schemastery': link:vendor/schemastery
 
+packageExtensionsChecksum: sha256-wL7od7DfVQFCPGuFgQYh2UHvX0MTwc+D6rrFPusxsRk=
+
 patchedDependencies:
   '@botiverse/oar@0.67.0': 65de2ca1966421e30893d8d4fed6a3d88e4247e131e7575fe791246e594538d6
   '@earendil-works/pi-ai@1.3.0': 4e1c90fd00aea42989664504668633033c1962e53c07860901edb4f72d843765
@@ -21,7 +23,7 @@ patchedDependencies:
   lexical@0.49.0: 54c4413db208cf234cb68c6a837f2523d3b319aa17911f1da385af08362e1356
   mdast-util-gfm-autolink-literal@2.0.1: 7fa6fc7927128a45c3f148d31faf388806895e2de39c14a144200edbc1e7aaa0
   micromark-extension-gfm-autolink-literal@2.1.0: 906ae7c0cd1f69e7ee308a41bc0542e0085276ac7517e56e96f0ccaf5a89327d
-  node-pty@1.2.0-beta.15: 9d30053266d0f39d3debe894c675867f6782da6bcadbc94a693b3cfb9eff8ed0
+  node-pty@1.2.0-beta.15: 6c53eae8936f164a5a802a4b9c49717b28d60c10fbed217e7363bfcef47f2a1d
 
 importers:
 
@@ -1239,12 +1241,17 @@ importers:
       '@deepseek-ai/node-addon-system-darwin-x64':
         specifier: workspace:~
         version: link:../darwin-x64
+      '@deepseek-ai/node-addon-system-freebsd-x64':
+        specifier: workspace:~
+        version: link:../freebsd-x64
       '@deepseek-ai/node-addon-system-linux-arm64':
         specifier: workspace:~
         version: link:../linux-arm64
       '@deepseek-ai/node-addon-system-linux-x64':
         specifier: workspace:~
         version: link:../linux-x64
+
+  native/system/packages/freebsd-x64: {}
 
   native/system/packages/linux-arm64: {}
 
@@ -17197,7 +17204,7 @@ importers:
         version: 3.1.1
       node-pty:
         specifier: 1.2.0-beta.15
-        version: 1.2.0-beta.15(patch_hash=9d30053266d0f39d3debe894c675867f6782da6bcadbc94a693b3cfb9eff8ed0)
+        version: 1.2.0-beta.15(patch_hash=6c53eae8936f164a5a802a4b9c49717b28d60c10fbed217e7363bfcef47f2a1d)
     devDependencies:
       '@deepseek-ai/cordis':
         specifier: workspace:~
@@ -33079,7 +33086,7 @@ snapshots:
 
   node-int64@0.4.0: {}
 
-  node-pty@1.2.0-beta.15(patch_hash=9d30053266d0f39d3debe894c675867f6782da6bcadbc94a693b3cfb9eff8ed0):
+  node-pty@1.2.0-beta.15(patch_hash=6c53eae8936f164a5a802a4b9c49717b28d60c10fbed217e7363bfcef47f2a1d):
     dependencies:
       node-addon-api: 7.1.1
 
@@ -33860,6 +33867,7 @@ snapshots:
       '@img/sharp-linux-x64': 0.35.5
       '@img/sharp-linuxmusl-arm64': 0.35.5
       '@img/sharp-linuxmusl-x64': 0.35.5
+      '@img/sharp-wasm32': 0.35.5
       '@img/sharp-webcontainers-wasm32': 0.35.5
       '@img/sharp-win32-arm64': 0.35.5
       '@img/sharp-win32-ia32': 0.35.5
