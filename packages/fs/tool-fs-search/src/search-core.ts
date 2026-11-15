@@ -19,10 +19,10 @@
  * @module @deepseek-ai/dsh-tool-fs-search/search-core
  */
 
-import { existsSync } from 'node:fs'
-import { isAbsolute, join, parse, relative, sep } from 'node:path'
-import { execSync } from 'node:child_process'
+import { isAbsolute, relative, sep } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
+import { spawnRipgrep } from '@deepseek-ai/dsh-util-ripgrep'
+export { resolveRgPath } from '@deepseek-ai/dsh-util-ripgrep'
 import { HarnessError } from '@deepseek-ai/dsh-llm'
 import { ItemRetainer, TextRetainer } from '@deepseek-ai/dsh-output-retention'
 import type { RetainedItems } from '@deepseek-ai/dsh-output-retention'
@@ -156,72 +156,6 @@ function completeStdout(toolName: string, stdout: SubprocessOutputRead, rawOutpu
 }
 
 /**
- * The ripgrep binary path, resolved at each call (not memoized) so that a
- * system `rg` installed after the process started is picked up on the very
- * next search without having to restart the harness.
- *
- * A single-file runtime uses the executable's `-rg` sidecar because a native
- * helper cannot be spawned from pkg's virtual filesystem. Node-mode builds
- * fall back to the platform package selected by `@vscode/ripgrep`. Resolving
- * at the call boundary keeps a missing or corrupt binary at the first search
- * call as `SEARCH_FAILED`, rather than failing the Loader composition.
- *
- * Resolution order (so the grep/glob tools also work on platforms — notably
- * FreeBSD — where `@vscode/ripgrep` ships no native binary):
- *   1. `DSH_RIPGREP_PATH` env override (explicit, e.g. a system ripgrep);
- *   2. the packaged `@vscode/ripgrep` binary, only when the file exists;
- *   3. a system `rg` discovered on `PATH` (`pkg install ripgrep` on FreeBSD);
- *   4. the packaged path even if missing — lets spawn surface `SEARCH_FAILED`
- *      as before when nothing usable is available.
- *
- * @returns the chosen binary's absolute path; the promise rejects
- *   when no platform package can be resolved and none of the fallbacks exist.
- */
-export function resolveRgPath(): Promise<string> {
-  return resolveRgPathUncached()
-}
-
-/**
- * Resolve the ripgrep binary for this call. Deliberately NOT memoized (upstream
- * caches the first resolution): on FreeBSD `@vscode/ripgrep` ships no binary, so
- * the usable binary is whatever `rg` the operator installed — `pkg install
- * ripgrep` is then picked up by the very next search, with no harness restart.
- */
-async function resolveRgPathUncached(): Promise<string> {
-  const override = process.env.DSH_RIPGREP_PATH
-  if (override !== undefined && existsSync(override)) return override
-  const executable = parse(process.execPath)
-  const executableSidecar = process.platform === 'win32'
-    ? join(executable.dir, `${executable.name}-rg.exe`)
-    : `${process.execPath}-rg`
-  if ('pkg' in process && existsSync(executableSidecar)) return executableSidecar
-  let packaged: string | undefined
-  try {
-    packaged = await resolvePackagedRgPath()
-  } catch {
-    // No platform package for this platform (FreeBSD ships none) — fall through
-    // to a system binary.
-  }
-  if (packaged !== undefined && existsSync(packaged)) return packaged
-  try {
-    const onPath = execSync('command -v rg || which rg', { encoding: 'utf-8' }).trim()
-    if (onPath.length > 0) return onPath
-  } catch {
-    // No system rg on PATH.
-  }
-  if (packaged !== undefined) return packaged
-  return resolvePackagedRgPath()
-}
-
-/** The `@vscode/ripgrep` platform binary, with upstream's Electron asar rewrite. */
-async function resolvePackagedRgPath(): Promise<string> {
-  const dependency = (await import('@vscode/ripgrep')).rgPath
-  return process.versions.electron === undefined
-    ? dependency
-    : dependency.replace(/\.asar(?=[\\/])/u, '.asar.unpacked')
-}
-
-/**
  * Run the packaged ripgrep binary with a plain argv vector and return its
  * complete raw stdout. The working directory is the calling agent's session
  * current directory when available, else
@@ -274,8 +208,8 @@ export async function runRipgrep(
     : await ctx.workingDirectory.ensure(exec.agent, exec.signal)
   let handle: SubprocessHandle
   try {
-    handle = ctx.subprocess.spawn({
-      argv: [await resolveRgPath(), '--no-config', ...argv],
+    handle = await spawnRipgrep(ctx.subprocess, {
+      argv,
       cwd: workdir,
       stdio: {
         stdin: 'ignore',
