@@ -120,16 +120,29 @@ initialized and cached in a broken state, so a retry keeps failing.
 
 ### Fix (second, unrelated bug found while investigating)
 
-`freebsd/dsh_web.rcd` and `freebsd/dsh-web-restart.sh` matched the service with `pgrep -f` / `pkill -f`.
-**FreeBSD's `pgrep`/`pkill` exclude themselves and all of their direct ancestors unless `-a` is given.** These
-scripts are normally run from inside a dsh session, and the harness process is then an ancestor, so
-`sh freebsd/dsh-web-restart.sh status` reported `NOT running` for a perfectly healthy service, and `stop`/`restart`
-could claim success without touching it. Both scripts now pass `-a` (the `[d]sh` bracket stays, so the pattern does
-not match its own argv), and `stop` warns when the caller is a descendant of the service it is about to end.
+`freebsd/dsh_web.rcd` and `freebsd/dsh-web-restart.sh` matched the service with a `pgrep -f` / `pkill -f` substring.
+Two separate FreeBSD behaviors broke that, and the fix has to handle both:
+
+1. **`pgrep`/`pkill` skip themselves and all direct ancestors** unless `-a` is given. These scripts are normally run
+   from inside a dsh session, and the harness process is then an ancestor, so `sh freebsd/dsh-web-restart.sh status`
+   reported `NOT running` for a perfectly healthy service, and `stop`/`restart` could claim success without touching
+   it.
+2. **`-a` alone overshoots.** `pkill -a -f "dsh:freebsd"` also matches any shell whose command line merely mentions
+   the string, so a stop could kill an unrelated ssh or editing session. Verified: a `sh -c '...' dsh:freebsd-decoy`
+   process is selected by the substring pattern and not by the final matcher.
+
+Both scripts now identify the harness by its **exact argv** — a process whose `comm` is `node` and whose `args`
+starts with `node /usr/local/bin/pnpm dsh:freebsd` — and signal those PIDs explicitly instead of using `pkill`.
+That is independent of who invoked the script, and it cannot match a shell that only talks about `dsh:freebsd`.
+`stop` also warns when the caller is a descendant of the service it is about to end.
+
+`freebsd/verify-service-match.sh` asserts both properties and the `status` path; it exits non-zero if the matcher
+and the scripts ever drift apart.
 
 ### Lessons
 
 - On FreeBSD, treat `fstat(1)`'s `bad` as "descriptor present but unstatable", not "closed".
 - A dependency whose *async* startup reports failures as unhandled rejections can crash a process that has a
   fail-loud handler, even though the failing call is unrelated to the reject site.
-- FreeBSD `pgrep`/`pkill` need `-a` in any script that may run from inside the process it is looking for.
+- FreeBSD `pgrep`/`pkill` need `-a` to see ancestors — but for anything that *signals* processes, `-a` plus a
+  substring is still wrong: match the exact argv and signal explicit PIDs.

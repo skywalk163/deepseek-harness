@@ -10,13 +10,34 @@ LOG="$REPO_ROOT/dsh_web.log"
 RUN="$SCRIPT_DIR/dsh-web-run.sh"
 PORT=3080
 
-# FreeBSD's pgrep/pkill exclude themselves AND all of their direct ancestors
-# unless -a is given. This script is routinely run from inside a dsh session, so
-# the harness process it is asked about is often an ancestor and would silently
-# not match -- making `status` report a healthy service as down and `stop` claim
-# success while leaving it running. -a makes the match independent of who
-# invoked the script; the bracket keeps the pattern from matching its own argv.
-is_running() { pgrep -a -f "[d]sh:freebsd" >/dev/null 2>&1; }
+# Identify the service by its exact argv, not by a substring of it.
+#
+# Two FreeBSD facts force this:
+#   1. pgrep/pkill exclude themselves AND all of their direct ancestors unless
+#      -a is given. This script is routinely run from inside a dsh session, so
+#      the harness process is often an ancestor and silently would not match --
+#      `status` reported a healthy service as down and `stop` claimed success
+#      while leaving it running.
+#   2. `-a` alone is not enough: `pkill -a -f "dsh:freebsd"` also matches any
+#      shell whose command line merely mentions the string, so stopping the
+#      service could kill an unrelated editing/ssh session.
+#
+# Matching the node process whose argv starts with `node <pnpm> dsh:freebsd`
+# has neither problem: it is independent of who invoked the script, and it
+# cannot match a shell that only talks about dsh:freebsd.
+SERVICE_ARGV="node /usr/local/bin/pnpm dsh:freebsd"
+
+# Print the pid of each service process, one per line.
+service_pids() {
+    for _p in $(ps -axo pid= 2>/dev/null); do
+        [ "$(ps -p "$_p" -o comm= 2>/dev/null)" = "node" ] || continue
+        case "$(ps -p "$_p" -o args= 2>/dev/null)" in
+            "$SERVICE_ARGV"|"$SERVICE_ARGV "*) printf '%s\n' "$_p" ;;
+        esac
+    done
+}
+
+is_running() { [ -n "$(service_pids)" ]; }
 
 current_token() {
     grep -oE "token=[A-Za-z0-9_-]+" "$LOG" 2>/dev/null | tail -1 | cut -d= -f2-
@@ -33,12 +54,11 @@ wait_new_token() {
 }
 
 # Print the pid of the running service when this script is itself a descendant
-# of it, so `stop` and `restart` can say why the caller's own session is about to
-# end. `pkill -a` intentionally matches ancestors -- that is what makes the
-# command correct from inside a dsh session -- and a service cannot outlive the
-# agent turn that asked to stop it.
+# of it, so `stop` and `restart` can warn that the caller's own session is about
+# to end. The service cannot outlive the agent turn that asked to stop it, so
+# saying so before the kill is the only chance the operator gets.
 stop_targets_self() {
-    _svc=$(pgrep -a -f "[d]sh:freebsd" | head -1)
+    _svc=$(service_pids | head -1)
     [ -n "$_svc" ] || return 1
     _p=$$
     while [ -n "$_p" ] && [ "$_p" -gt 1 ]; do
@@ -51,10 +71,12 @@ stop_targets_self() {
 stop() {
     if is_running; then
         if stop_targets_self; then
-            echo "note: this script is running inside dsh web (pid $(pgrep -a -f '[d]sh:freebsd' | head -1));"
+            echo "note: this script is running inside dsh web (pid $(service_pids | head -1));"
             echo "      stopping the service ends the current session. Use rc.d or another shell to keep it."
         fi
-        pkill -a -f "[d]sh:freebsd"
+        for _p in $(service_pids); do
+            kill -TERM "$_p" 2>/dev/null
+        done
         echo "sent TERM to dsh web"
     else
         echo "not running"
@@ -86,7 +108,7 @@ start() {
 
 status() {
     if is_running; then
-        echo "RUNNING pid $(pgrep -a -f '[d]sh:freebsd' | head -1)"
+        echo "RUNNING pid $(service_pids | head -1)"
         sockstat -l -p "$PORT" 2>/dev/null | grep -q node && echo "listening on :$PORT"
         echo "Open:  http://127.0.0.1:${PORT}/?token=$(current_token)"
     else

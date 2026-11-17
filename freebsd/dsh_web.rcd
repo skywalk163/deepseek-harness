@@ -90,6 +90,23 @@ dsh_web_precmd() {
     dsh_web_log_before=$(wc -l < "${dsh_web_log}" 2>/dev/null || echo 0)
 }
 
+# Identify the harness process by its exact argv rather than by a substring.
+#
+# FreeBSD's pgrep/pkill skip themselves and all direct ancestors, so a plain
+# `pkill -f dsh:freebsd` issued from inside a dsh session can miss the very
+# service it was asked to stop. Adding -a fixes the miss but overshoots: it also
+# matches any shell whose command line merely mentions "dsh:freebsd", so a stop
+# could kill an unrelated ssh or editor session. Matching `node .../pnpm
+# dsh:freebsd` has neither problem, and does not depend on who ran the command.
+dsh_web_service_pids() {
+    for _p in $(ps -axo pid= 2>/dev/null); do
+        [ "$(ps -p "$_p" -o comm= 2>/dev/null)" = "node" ] || continue
+        case "$(ps -p "$_p" -o args= 2>/dev/null)" in
+            "node /usr/local/bin/pnpm dsh:freebsd"|"node /usr/local/bin/pnpm dsh:freebsd "*) printf '%s\n' "$_p" ;;
+        esac
+    done
+}
+
 # Stop the daemon AND its dsh node child. daemon -P only records the supervised
 # pid; killing just that leaves the node process orphaned and still holding the
 # port, which would make a subsequent start fail with EADDRINUSE.
@@ -97,10 +114,9 @@ dsh_web_stop() {
     if [ -f "$pidfile" ]; then
         kill -TERM "$(cat "$pidfile")" 2>/dev/null
     fi
-    # -a so the match does not depend on who ran `service dsh_web stop`: FreeBSD's
-    # pkill excludes its own direct ancestors, and rc.d stop is often issued from
-    # inside a dsh session whose harness process is exactly such an ancestor.
-    pkill -a -f "[d]sh:freebsd" 2>/dev/null
+    for _p in $(dsh_web_service_pids); do
+        kill -TERM "$_p" 2>/dev/null
+    done
     local i
     for i in $(seq 1 20); do
         if sockstat -l -p "${dsh_web_port}" 2>/dev/null | grep -q "127.0.0.1:${dsh_web_port}"; then
@@ -137,7 +153,7 @@ dsh_web_wait_token() {
 dsh_web_status() {
     if sockstat -l -p "${dsh_web_port}" 2>/dev/null | grep -q "127.0.0.1:${dsh_web_port}"; then
         echo "dsh_web is RUNNING on :${dsh_web_port}"
-        pgrep -a -f "[d]sh:freebsd" | while read p; do echo "  pid $p"; done
+        dsh_web_service_pids | while read p; do echo "  pid $p"; done
     else
         echo "dsh_web is NOT running"
         return 1

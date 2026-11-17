@@ -118,15 +118,27 @@ UNHANDLED ErrnoError errno=8
 
 ### 修复（排查中发现的第二个、独立缺陷）
 
-`freebsd/dsh_web.rcd` 和 `freebsd/dsh-web-restart.sh` 用 `pgrep -f` / `pkill -f` 判断服务。
-**FreeBSD 的 `pgrep`/`pkill` 默认会排除自身及所有直接祖先进程（除非加 `-a`）。** 这两个脚本通常在
-dsh 会话内部执行，此时 harness 进程正是祖先，于是 `sh freebsd/dsh-web-restart.sh status` 会把健康的服务
-报成 `NOT running`，`stop`/`restart` 也可能“报成功”却什么都没停。现在两个脚本都加了 `-a`
-（仍保留 `[d]sh` 括号写法，避免匹配到自己的 argv），且 `stop` 在调用方是服务后代时会先给出提示。
+`freebsd/dsh_web.rcd` 和 `freebsd/dsh-web-restart.sh` 原先用 `pgrep -f` / `pkill -f` 做子串匹配。
+FreeBSD 有两条彼此独立的行为会让它出错，修复必须同时覆盖：
+
+1. **`pgrep`/`pkill` 默认跳过自身及所有直接祖先**（除非加 `-a`）。这两个脚本通常在 dsh 会话内部执行，
+   此时 harness 进程正是祖先，于是 `sh freebsd/dsh-web-restart.sh status` 会把健康的服务报成
+   `NOT running`，`stop`/`restart` 也可能“报成功”却什么都没停。
+2. **只加 `-a` 又会过度匹配。** `pkill -a -f "dsh:freebsd"` 会命中任何命令行里仅仅**提到**该字符串的 shell，
+   于是 stop 可能误杀无关的 ssh 或编辑器会话。已实测：一个 `sh -c '...' dsh:freebsd-decoy` 进程会被子串
+   模式选中，而不会被最终实现选中。
+
+现在两个脚本都改为按**精确 argv** 识别服务——`comm` 为 `node` 且 `args` 以
+`node /usr/local/bin/pnpm dsh:freebsd` 开头的进程——并对这些 PID 显式发信号，不再用 `pkill`。
+这样既不依赖“谁调用了脚本”，也不可能命中只是提到 `dsh:freebsd` 的 shell。
+`stop` 还会在调用方是服务后代时先给出提示。
+
+`freebsd/verify-service-match.sh` 对这两条性质与 `status` 路径做断言；一旦匹配逻辑与脚本走偏就返回非零。
 
 ### 经验
 
 - FreeBSD 上 `fstat(1)` 的 `bad` 表示“描述符存在但不可 stat”，不是“已关闭”。
 - 若某个依赖把**异步**启动失败以 unhandled rejection 形式抛出，即使失败调用与 rejection 位置无关，
   也会让装有 fail-loud 处理器的进程直接退出。
-- 任何可能从被查找进程内部执行的脚本，FreeBSD 上的 `pgrep`/`pkill` 都要加 `-a`。
+- 任何可能从被查找进程内部执行的脚本，FreeBSD 上的 `pgrep`/`pkill` 都要加 `-a`；
+  但凡是要**发信号**的场景，`-a` 加子串匹配仍然不对——应按精确 argv 匹配并显式对 PID 发信号。
