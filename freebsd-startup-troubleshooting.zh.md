@@ -65,3 +65,68 @@
   3. **boxrun.e2e.ts 残留坑**：本地未跟踪副本（0600）引用已删除的 `boxrunProfileArgs`，会让 `tsc -b` 中断 → master 已删除该文件，本地残留 `mv` 到 /tmp 备份即可，build 后勿还原。
   4. **daemon start 同样 paramiko PipeTimeout**（与 1.5 同族）→ 超时后另开通道独立验证。
 - 结论：两机（1.5 / 0.88）当前均运行 master 7d588f4fe3，构建零报错、web HTTP 200、沙箱 10/10，状态一致。
+
+---
+
+## [P4] 读一张图导致整个 web 服务退出（`fatal load failure: ErrnoError ... errno: 8`）
+
+本机反复出现：会话里调用 `read_image`（或粘贴图片）后，工具报
+`Error: sharp.libvipsVersion is not a function`，几秒后 `dsh_web.log` 出现
+`dsh: fatal load failure: ErrnoError { name: 'ErrnoError', errno: 8 }`，服务退出、必须重启。
+
+### 根因（两个缺陷，一个症状）
+
+1. **FreeBSD 上的 sharp 是 WebAssembly 构建。** sharp 没有 `freebsd-x64` 原生二进制，实际解析到
+   `@img/sharp-freebsd-wasm32` → `@img/sharp-wasm32`。它的 Emscripten 运行时会在**模块求值阶段**
+   用 `fstatSync(0|1|2)` 建立 `/dev/stdin`、`/dev/stdout`、`/dev/stderr` 三条流。
+
+2. **“存在但无法 fstat”的标准描述符会打断这次启动。** 这种描述符在 `fstat(1)` 里显示为 `bad`
+   （**真正关闭**的描述符根本不会列出这一行）。此时 `fstatSync` 抛 `EBADF`，而运行时是把它当作
+   **自身异步启动产生的 unhandled rejection** 报告出来，而不是抛出可捕获的加载错误，于是
+   `require('sharp')` “成功”了，但拿到的是半初始化绑定：
+   - 第一次光栅操作报 `sharp.libvipsVersion is not a function`；
+   - `installFailLoud` 把这条游离的 `ErrnoError` 当作致命错误并退出进程。
+
+   FreeBSD 的 `revoke(2)` 正好制造这种描述符状态——控制会话结束时它会让终端上的描述符失效，
+   而 sshd 对服务就是这么做的。本机存活的服务进程在 `fstat` 里确实显示 `0 - - bad -`，
+   而它当时仍在监听 `:3080`。
+
+### 复现（确定性）
+
+在首次加载 sharp 之前关闭三个标准描述符，可精确复现线上的成对症状：
+
+```
+closed 0:EBADF 1:EBADF 2:EBADF
+RAW THREW sharp.libvipsVersion is not a function
+UNHANDLED ErrnoError errno=8
+```
+
+对进程自身的 pty 执行 `revoke(2)` 会得到同样的 `0:EBADF 1:EBADF 2:EBADF` 首行，即同一故障。
+注意：`bad` 描述符**无法靠重试 `require('sharp')` 修复**——Emscripten 模块已以损坏状态初始化并被缓存，
+重试仍然失败。
+
+### 修复
+
+- `packages/attachment/attachment-local/src/sharp.ts`：新增 `ensureStandardStreams()`，对 0/1/2 做 `fstat`，
+  把不可用的描述符重绑到 `/dev/null`（先 `closeSync` 再 `openSync`，利用“最小空闲描述符号”规则占回同一位）。
+  `requireSharp()` 在加载前调用它；若某个描述符无法恢复，则直接拒绝加载，而不是触发那条致命 rejection。
+  `LocalAttachmentStore` 构造函数也在挂载时执行同一修复，使修复发生在启动期而非首次读图时。
+- `freebsd/dsh_web.rcd` 与 `freebsd/dsh-web-restart.sh`：启动时显式 `</dev/null`，避免被托管进程继承
+  一个失效的描述符 0。
+- 在同样的损坏状态下验证：`repaired=[0,1,2]` → 读图流水线正常返回图像字节。
+- 回归测试：`packages/attachment/attachment-local/tests/standard-streams.spec.ts`。
+
+### 修复（排查中发现的第二个、独立缺陷）
+
+`freebsd/dsh_web.rcd` 和 `freebsd/dsh-web-restart.sh` 用 `pgrep -f` / `pkill -f` 判断服务。
+**FreeBSD 的 `pgrep`/`pkill` 默认会排除自身及所有直接祖先进程（除非加 `-a`）。** 这两个脚本通常在
+dsh 会话内部执行，此时 harness 进程正是祖先，于是 `sh freebsd/dsh-web-restart.sh status` 会把健康的服务
+报成 `NOT running`，`stop`/`restart` 也可能“报成功”却什么都没停。现在两个脚本都加了 `-a`
+（仍保留 `[d]sh` 括号写法，避免匹配到自己的 argv），且 `stop` 在调用方是服务后代时会先给出提示。
+
+### 经验
+
+- FreeBSD 上 `fstat(1)` 的 `bad` 表示“描述符存在但不可 stat”，不是“已关闭”。
+- 若某个依赖把**异步**启动失败以 unhandled rejection 形式抛出，即使失败调用与 rejection 位置无关，
+  也会让装有 fail-loud 处理器的进程直接退出。
+- 任何可能从被查找进程内部执行的脚本，FreeBSD 上的 `pgrep`/`pkill` 都要加 `-a`。

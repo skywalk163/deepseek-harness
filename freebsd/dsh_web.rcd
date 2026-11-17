@@ -73,7 +73,15 @@ if [ -n "$dsh_web_projectdir" ]; then
     export DSH_PROJECT_DIR="$dsh_web_projectdir"
 fi
 
-command_args="-P ${pidfile} -o ${dsh_web_log} /bin/sh ${dsh_web_chdir}/freebsd/dsh-web-run.sh"
+# `daemon(8)` detaches without a controlling terminal, and the server has no
+# interactive stdin to read, so redirect it from /dev/null explicitly. Without
+# this the service inherits whatever descriptor 0 the boot or rc.subr context
+# happened to leave behind; a descriptor that exists but cannot be stat'ed makes
+# the FreeBSD WebAssembly Sharp backend's stdio setup fail when it loads, which
+# used to surface as a fatal `ErrnoError` and stop the whole service the first
+# time anything read an image. dsh-web-run.sh execs through so this stdin stays
+# the node process's descriptor 0.
+command_args="-P ${pidfile} -o ${dsh_web_log} /bin/sh -c 'exec /bin/sh ${dsh_web_chdir}/freebsd/dsh-web-run.sh </dev/null'"
 required_dirs="${dsh_web_chdir}"
 
 # Capture the current log length BEFORE launching so we only match the freshly
@@ -89,7 +97,10 @@ dsh_web_stop() {
     if [ -f "$pidfile" ]; then
         kill -TERM "$(cat "$pidfile")" 2>/dev/null
     fi
-    pkill -f "[d]sh:freebsd" 2>/dev/null
+    # -a so the match does not depend on who ran `service dsh_web stop`: FreeBSD's
+    # pkill excludes its own direct ancestors, and rc.d stop is often issued from
+    # inside a dsh session whose harness process is exactly such an ancestor.
+    pkill -a -f "[d]sh:freebsd" 2>/dev/null
     local i
     for i in $(seq 1 20); do
         if sockstat -l -p "${dsh_web_port}" 2>/dev/null | grep -q "127.0.0.1:${dsh_web_port}"; then
@@ -126,7 +137,7 @@ dsh_web_wait_token() {
 dsh_web_status() {
     if sockstat -l -p "${dsh_web_port}" 2>/dev/null | grep -q "127.0.0.1:${dsh_web_port}"; then
         echo "dsh_web is RUNNING on :${dsh_web_port}"
-        pgrep -f "[d]sh:freebsd" | while read p; do echo "  pid $p"; done
+        pgrep -a -f "[d]sh:freebsd" | while read p; do echo "  pid $p"; done
     else
         echo "dsh_web is NOT running"
         return 1
