@@ -313,6 +313,18 @@ describe('llm-deepseek real dynamic composition', () => {
     expect(serverB.headers[0]?.['x-api-key']).toBe('rotated-key')
   })
 
+  it('reports a provider refusal for a request without a safety check flag', async () => {
+    vi.stubEnv('DEEPSEEK_API_KEY', '')
+    const refusal = textEvents.map(event => event.replace('"end_turn"', '"refusal"'))
+    const server = await mockServer([{ kind: 'sse', events: refusal }])
+    const { ctx } = await loadComposition({ withDynamic: true, baseURL: server.url })
+
+    const refused = await assemble(ctx, { model: 'deepseek-v4-flash', messages: [] })
+    expect(server.requests).toHaveLength(1)
+    expect(server.requests[0]).not.toHaveProperty('safety_check')
+    expect(refused.finish).toMatchObject({ kind: 'error', failure: { code: 'CONTENT_REFUSED' } })
+  })
+
   it('keeps a stored key writable and rotatable across a real restart', async () => {
     // No ambient DEEPSEEK_API_KEY: the shipped surfaces do not hoist
     // the credentials document into process.env, so a stored key must stay file-sourced.
@@ -323,7 +335,7 @@ describe('llm-deepseek real dynamic composition', () => {
     const home = root!
     await boot.ctx.get('credentials')!.set(KEY_REF, 'stored-by-ui')
     expect(await boot.ctx.get('credentials')!.describe(KEY_REF))
-      .toEqual({ configured: true, source: 'file', writable: true })
+      .toEqual({ configured: true, source: 'file', writable: true, masked: '•'.repeat(12) })
     await assemble(boot.ctx, { model: 'deepseek-v4-flash', messages: [] })
     expect(first.headers[0]?.['x-api-key']).toBe('stored-by-ui')
     await boot.ctx.fiber.dispose()
@@ -335,9 +347,12 @@ describe('llm-deepseek real dynamic composition', () => {
     // The stored key is still the provider's own file entry — not a
     // launch-environment value, which is what hoisting it would have made it.
     expect(await credentials.resolve(KEY_REF)).toEqual({ value: 'stored-by-ui', source: 'file' })
-    expect(await credentials.describe(KEY_REF)).toEqual({ configured: true, source: 'file', writable: true })
+    expect(await credentials.describe(KEY_REF))
+      .toEqual({ configured: true, source: 'file', writable: true, masked: '•'.repeat(12) })
     // Rotation still works after the restart, and the next request uses it.
     await credentials.set(KEY_REF, 'rotated-after-restart')
+    expect(await credentials.describe(KEY_REF))
+      .toEqual({ configured: true, source: 'file', writable: true, masked: '•'.repeat(21) })
     await assemble(restarted.ctx, { model: 'deepseek-v4-flash', messages: [] })
     expect(second.headers[0]?.['x-api-key']).toBe('rotated-after-restart')
   })
