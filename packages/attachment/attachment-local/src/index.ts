@@ -18,6 +18,7 @@ import type {
 import { dshCachePath, resolveDshHome } from '@deepseek-ai/dsh-home-paths'
 import type { NormalizationPolicy } from './normalization.ts'
 import { CompressionLimiter, compressionFailure } from './compression-limiter.ts'
+import { ensureStandardStreams } from './sharp.ts'
 import { commitPreparedImageFile, normalizedImagePath, prepareImageFile, readImageFile, validateImageFile } from './store.ts'
 import {
   readFileStreamVerbatim, saveFileStreamVerbatim, saveFileVerbatim, storedFilePath,
@@ -176,6 +177,13 @@ export class LocalAttachmentStore extends AttachmentStore {
 
   constructor(ctx: Context, config: Config) {
     super(ctx)
+    // Repair the standard descriptors while this service mounts rather than on
+    // the first raster operation: the FreeBSD WebAssembly Sharp backend reads
+    // them when it loads, and a broken descriptor turns that load into an
+    // unhandled rejection the launcher treats as a fatal boot failure. A
+    // descriptor that cannot be repaired here fails the mount instead, which is
+    // a startup error the operator can read rather than a crash mid-session.
+    ensureStandardStreams()
     const dshHome = resolveDshHome(config.dshHome)
     this.root = join(dshHome, 'attachments', 'v1')
     this.cacheRoot = dshCachePath({ dshHome }, 'attachments')

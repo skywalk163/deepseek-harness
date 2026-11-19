@@ -1,0 +1,28 @@
+# Bilingual-pair consistency record for 0005-bad-stdio-descriptor-crashed-on-image-read.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write docs/postmortem/0005-bad-stdio-descriptor-crashed-on-image-read.md
+/post-mortem-0005-a-bad-stdio-descriptor-crashed-the-service-on-every-image-read:
+  en: 4e3f53f69edd2b12
+  zh: 1a08b643fcec0d08
+/post-mortem-0005-a-bad-stdio-descriptor-crashed-the-service-on-every-image-read/executive-summary:
+  en: 490806740f773e58
+  zh: 754c6d84842417d7
+/post-mortem-0005-a-bad-stdio-descriptor-crashed-the-service-on-every-image-read/summary:
+  en: 2522665d2a6470fc
+  zh: 64142eee2bfb7eb1
+/post-mortem-0005-a-bad-stdio-descriptor-crashed-the-service-on-every-image-read/impact:
+  en: 4181046b45a07e63
+  zh: fa06a57752215e5b
+/post-mortem-0005-a-bad-stdio-descriptor-crashed-the-service-on-every-image-read/timeline:
+  en: d2fd0b78ae5bf06b
+  zh: 3ef402805f483313
+/post-mortem-0005-a-bad-stdio-descriptor-crashed-the-service-on-every-image-read/root-cause:
+  en: 8e5802f6e63069a9
+  zh: a1932c94a663d8e5
+/post-mortem-0005-a-bad-stdio-descriptor-crashed-the-service-on-every-image-read/guardrails-added:
+  en: bf0024a6c68b2132
+  zh: 4300101da378ad83
+/post-mortem-0005-a-bad-stdio-descriptor-crashed-the-service-on-every-image-read/lessons:
+  en: f0bf4b8dc1172a5e
+  zh: b86b6c77e254470c

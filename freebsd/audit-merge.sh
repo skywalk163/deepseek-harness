@@ -70,7 +70,7 @@ chk ".npmrc registry"             1 "git show :.npmrc | grep registry"
 chk ".npmrc disturl"              1 "git show :.npmrc | grep disturl"
 chk "terminal-bash freebsd"       1 "git show :packages/terminal/terminal-bash/src/config.ts | grep -i freebsd"
 chk "process-inspector FreeBSD"   1 "git show :packages/subprocess/subprocess-local/src/process-inspector.ts | grep -i freebsd"
-chk "search-core rg 回退"         1 "git show :packages/fs/tool-fs-search/src/search-core.ts | grep DSH_RIPGREP_PATH"
+chk "util/ripgrep FreeBSD rg 回退" 1 "git show :packages/util/ripgrep/src/index.ts | grep DSH_RIPGREP_PATH"
 chk "sandbox freebsd hint"        1 "git show :packages/sandbox/sandbox/src/index.ts | grep -i freebsd"
 chk "gen-* LF 归一化"             1 "git show :scripts/gen-config-catalog.ts | grep 'replace('"
 

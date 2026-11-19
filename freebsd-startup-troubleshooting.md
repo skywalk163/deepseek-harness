@@ -66,3 +66,83 @@ Current master (`8d0ac97fe6`) builds (incremental) and starts on 1.5 with **zero
   3. **boxrun.e2e.ts leftover**: an untracked local copy (0600) imports the removed `boxrunProfileArgs`, which breaks `tsc -b` → master already deleted the file; `mv` the leftover to /tmp as backup and do NOT restore it after building.
   4. **daemon start hits the same paramiko PipeTimeout** (same family as 1.5) → verify on a fresh channel after the timeout.
 - Conclusion: both hosts (1.5 / 0.88) now run master `7d588f4fe3` with zero-error builds, web HTTP 200, sandbox 10/10 — identical state.
+
+---
+
+## [P4] Reading an image killed the whole web service (`fatal load failure: ErrnoError ... errno: 8`)
+
+Observed repeatedly on this host: a session calls `read_image` (or pastes an image), `read_image` fails with
+`Error: sharp.libvipsVersion is not a function`, and seconds later `dsh_web.log` gains
+`dsh: fatal load failure: ErrnoError { name: 'ErrnoError', errno: 8 }` — the service exits and has to be restarted.
+
+### Root cause (two faults, one symptom)
+
+1. **Sharp on FreeBSD is a WebAssembly build.** There is no native `freebsd-x64` binary, so `sharp` resolves to
+   `@img/sharp-freebsd-wasm32` → `@img/sharp-wasm32`. Its Emscripten runtime builds `/dev/stdin`, `/dev/stdout`,
+   and `/dev/stderr` by calling `fstatSync(0|1|2)` **while the module evaluates**.
+
+2. **A standard descriptor that exists but cannot be stat'ed breaks that startup.** `fstat(1)` prints such a
+   descriptor as `bad` (a merely *closed* descriptor is not listed at all). `fstatSync` then throws `EBADF`, the
+   runtime reports it as an **unhandled rejection** from its own async startup instead of a thrown load error, so
+   `require('sharp')` "succeeds" with a half-initialized binding:
+   - the first raster operation fails with `sharp.libvipsVersion is not a function`, and
+   - `installFailLoud` (correctly) treats the stray `ErrnoError` rejection as fatal and exits the process.
+
+   FreeBSD's `revoke(2)` produces exactly this descriptor state — it invalidates the descriptors on a terminal when
+   the controlling session ends, which is what sshd does to a service. On this host the live service showed
+   `0 - - bad -` in `fstat` while the process was still listening on `:3080`.
+
+### Reproduction (deterministic)
+
+Closing the three standard descriptors before the first `sharp` load reproduces the production pair exactly:
+
+```
+closed 0:EBADF 1:EBADF 2:EBADF
+RAW THREW sharp.libvipsVersion is not a function
+UNHANDLED ErrnoError errno=8
+```
+
+`revoke(2)` on the process's own pty yields the same `0:EBADF 1:EBADF 2:EBADF` first line, i.e. the same failure.
+Note that `bad` descriptors are *not* repaired by retrying `require('sharp')` — the Emscripten module is already
+initialized and cached in a broken state, so a retry keeps failing.
+
+### Fix
+
+- `packages/attachment/attachment-local/src/sharp.ts`: `ensureStandardStreams()` stats 0/1/2 and rebinds every
+  unusable one to `/dev/null` (`closeSync` then `openSync`, so the lowest-free-descriptor rule refills the same
+  slot). `requireSharp()` runs it before the load; a descriptor that cannot be restored refuses the load instead of
+  triggering the fatal rejection. `LocalAttachmentStore`'s constructor runs the same repair at mount time, so the
+  repair happens at startup rather than on the first image.
+- `freebsd/dsh_web.rcd` and `freebsd/dsh-web-restart.sh`: start the service with `</dev/null`, so a supervised
+  process never inherits a stale descriptor 0.
+- Verified against the same broken state: `repaired=[0,1,2]` → the read_image pipeline returns image bytes.
+- Regression test: `packages/attachment/attachment-local/tests/standard-streams.spec.ts`.
+
+### Fix (second, unrelated bug found while investigating)
+
+`freebsd/dsh_web.rcd` and `freebsd/dsh-web-restart.sh` matched the service with a `pgrep -f` / `pkill -f` substring.
+Two separate FreeBSD behaviors broke that, and the fix has to handle both:
+
+1. **`pgrep`/`pkill` skip themselves and all direct ancestors** unless `-a` is given. These scripts are normally run
+   from inside a dsh session, and the harness process is then an ancestor, so `sh freebsd/dsh-web-restart.sh status`
+   reported `NOT running` for a perfectly healthy service, and `stop`/`restart` could claim success without touching
+   it.
+2. **`-a` alone overshoots.** `pkill -a -f "dsh:freebsd"` also matches any shell whose command line merely mentions
+   the string, so a stop could kill an unrelated ssh or editing session. Verified: a `sh -c '...' dsh:freebsd-decoy`
+   process is selected by the substring pattern and not by the final matcher.
+
+Both scripts now identify the harness by its **exact argv** — a process whose `comm` is `node` and whose `args`
+starts with `node /usr/local/bin/pnpm dsh:freebsd` — and signal those PIDs explicitly instead of using `pkill`.
+That is independent of who invoked the script, and it cannot match a shell that only talks about `dsh:freebsd`.
+`stop` also warns when the caller is a descendant of the service it is about to end.
+
+`freebsd/verify-service-match.sh` asserts both properties and the `status` path; it exits non-zero if the matcher
+and the scripts ever drift apart.
+
+### Lessons
+
+- On FreeBSD, treat `fstat(1)`'s `bad` as "descriptor present but unstatable", not "closed".
+- A dependency whose *async* startup reports failures as unhandled rejections can crash a process that has a
+  fail-loud handler, even though the failing call is unrelated to the reject site.
+- FreeBSD `pgrep`/`pkill` need `-a` to see ancestors — but for anything that *signals* processes, `-a` plus a
+  substring is still wrong: match the exact argv and signal explicit PIDs.

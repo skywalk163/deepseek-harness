@@ -74,11 +74,27 @@ dsh_web_precmd() {
 # pids coincide — but kill the whole pattern as a belt-and-braces measure and
 # wait for the port to be released: a lingering listener makes the next start
 # fail with EADDRINUSE.
+# Identify the service by its exact argv rather than by a substring. FreeBSD's
+# pgrep/pkill skip themselves and all direct ancestors, so a stop/status issued
+# from inside the running session can miss the service; adding -a fixes the miss
+# but then also matches any shell whose command line merely mentions the path.
+# Matching the node process that actually runs dsh has neither problem.
+dsh_web_service_pids() {
+    for _p in $(ps -axo pid= 2>/dev/null); do
+        [ "$(ps -p "$_p" -o comm= 2>/dev/null)" = "node" ] || continue
+        case "$(ps -p "$_p" -o args= 2>/dev/null)" in
+            *"%%PREFIX%%/bin/dsh web"*) printf '%s\n' "$_p" ;;
+        esac
+    done
+}
+
 dsh_web_stop() {
     if [ -f "${pidfile}" ]; then
         kill -TERM "$(cat "${pidfile}")" 2>/dev/null
     fi
-    pkill -f "[l]ibexec/deepseek-harness" 2>/dev/null
+    for _p in $(dsh_web_service_pids); do
+        kill -TERM "$_p" 2>/dev/null
+    done
     local i
     for i in $(seq 1 20); do
         if sockstat -l -p "${dsh_web_port}" 2>/dev/null | grep -q ":${dsh_web_port}"; then
@@ -94,7 +110,7 @@ dsh_web_stop() {
 dsh_web_status() {
     if sockstat -l -p "${dsh_web_port}" 2>/dev/null | grep -q ":${dsh_web_port}"; then
         echo "dsh_web is RUNNING on ${dsh_web_host}:${dsh_web_port}"
-        pgrep -f "[l]ibexec/deepseek-harness" | while read p; do echo "  pid $p"; done
+        dsh_web_service_pids | while read p; do echo "  pid $p"; done
     else
         echo "dsh_web is NOT running"
         return 1

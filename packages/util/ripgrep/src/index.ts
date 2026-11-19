@@ -15,38 +15,40 @@ import type { SubprocessHandle, SubprocessOutcome, SubprocessRuntime, Subprocess
  * at the call boundary keeps a missing or corrupt binary at the first search
  * call as `SEARCH_FAILED`, rather than failing the Loader composition.
  *
- * Resolution order (so the grep/glob tools also work on platforms — notably
- * FreeBSD — where `@vscode/ripgrep` ships no native binary):
+ * FORK NOTE (FreeBSD port): upstream resolves lazily once per process and uses
+ * no system fallback. Here `@vscode/ripgrep` ships no `freebsd-x64` package and
+ * THROWS at import, so resolution order is:
  *   1. `DSH_RIPGREP_PATH` env override (explicit, e.g. a system ripgrep);
- *   2. the packaged `@vscode/ripgrep` binary, only when the file exists;
- *   3. a system `rg` discovered on `PATH` (`pkg install ripgrep` on FreeBSD);
- *   4. the packaged path even if missing — lets spawn surface `SEARCH_FAILED`
+ *   2. a single-file runtime's `-rg` sidecar beside the executable;
+ *   3. the packaged `@vscode/ripgrep` binary, only when the file exists;
+ *   4. a system `rg` discovered on `PATH` (`pkg install ripgrep` on FreeBSD);
+ *   5. the packaged path even if missing — lets spawn surface `SEARCH_FAILED`
  *      as before when nothing usable is available.
  *
- * Deliberately NOT memoized (upstream caches the first resolution): on FreeBSD
- * `@vscode/ripgrep` ships no binary, so the usable binary is whatever `rg` the
- * operator installed — `pkg install ripgrep` is then picked up by the very next
- * search, with no harness restart. This is an intentional, documented contract.
+ * Deliberately NOT memoized (upstream memoizes the first resolution): on FreeBSD
+ * the usable binary is whatever `rg` the operator installed — `pkg install
+ * ripgrep` is then picked up by the very next search, no harness restart.
  *
- * @returns the chosen binary's absolute path; the promise rejects
- *   when no platform package can be resolved and none of the fallbacks exist.
+ * @returns the chosen binary's absolute path; the promise rejects when no
+ *   platform package can be resolved and none of the fallbacks exist.
  */
 export function resolveRgPath(): Promise<string> {
-  const override = process.env.DSH_RIPGREP_PATH
-  if (override !== undefined && existsSync(override)) return Promise.resolve(override)
-  const executable = parse(process.execPath)
-  const executableSidecar = process.platform === 'win32'
-    ? join(executable.dir, `${executable.name}-rg.exe`)
-    : `${process.execPath}-rg`
-  if ('pkg' in process && existsSync(executableSidecar)) return Promise.resolve(executableSidecar)
   return resolveRgPathUncached()
 }
 
 /**
- * Resolve the packaged binary (with upstream's Electron asar rewrite), then
- * fall back to a system `rg` when the packaged file is absent — the FreeBSD case.
+ * Resolve the usable binary for this call. Checks the env override and single-
+ * file sidecar first, then the packaged path, then a system `rg` (FreeBSD), and
+ * finally the packaged path even if missing so spawn can surface SEARCH_FAILED.
  */
 async function resolveRgPathUncached(): Promise<string> {
+  const override = process.env.DSH_RIPGREP_PATH
+  if (override !== undefined && existsSync(override)) return override
+  const executable = parse(process.execPath)
+  const executableSidecar = process.platform === 'win32'
+    ? join(executable.dir, `${executable.name}-rg.exe`)
+    : `${process.execPath}-rg`
+  if ('pkg' in process && existsSync(executableSidecar)) return executableSidecar
   let packaged: string | undefined
   try {
     packaged = await resolvePackagedRgPath()
@@ -56,7 +58,7 @@ async function resolveRgPathUncached(): Promise<string> {
   }
   if (packaged !== undefined && existsSync(packaged)) return packaged
   try {
-    const onPath = execSync('command -v rg || which rg', { encoding: 'utf-8' }).trim()
+    const onPath = execSync('command -v rg', { encoding: 'utf-8' }).trim()
     if (onPath.length > 0) return onPath
   } catch {
     // No system rg on PATH.
