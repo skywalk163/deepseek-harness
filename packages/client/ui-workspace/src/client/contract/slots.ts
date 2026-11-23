@@ -98,6 +98,12 @@ export interface SessionRowOwnerProps {
   displayTitle: string
 }
 
+/**
+ * Drag data type a Session row sets to its Session id. The drag allows `copy`, and `move` while the row can be reordered;
+ * a drop target outside the list that accepts the Session sets `dropEffect` to `copy`, which discards the pending reorder.
+ */
+export type SessionDragType = 'application/x-dsh-session'
+
 /** The row menu's open state as its owner holds it: the `useState` pair. */
 export type MenuOpenState = readonly [open: boolean, setOpen: (open: boolean) => void]
 
@@ -350,6 +356,7 @@ export type SessionRowActionProps<Injected extends object = object> =
 export type RowToast =
   | { kind: 'archived'; sessionId: SessionId; message?: string; tone?: 'success' | 'warning' }
   | { kind: 'stoppedAndArchived'; sessionId: SessionId; message?: string; tone?: 'success' | 'warning' }
+  | { kind: 'readingFailed' }
   | { kind: 'sessionIdCopied' }
   | { kind: 'sessionIdCopyFailed' }
   | { kind: 'pinFailed' }

@@ -11,8 +11,9 @@
 import { stat } from 'node:fs/promises'
 import { extname } from 'node:path'
 import type { ImageAttachmentRef, ImageMediaType, SaveImageAttachment } from '@deepseek-ai/dsh-attachment'
-import { Session, SESSION_FORMAT_VERSION, SessionId, SessionLogOffset } from '@deepseek-ai/dsh-session'
-import type { SessionEvent, SessionHeader } from '@deepseek-ai/dsh-session'
+import { brandNumber, brandString } from '@deepseek-ai/dsh-brand'
+import { SESSION_FORMAT_VERSION, validateSessionLog } from '@deepseek-ai/dsh-session'
+import type { SessionEvent, SessionHeader, SessionId, SessionLogOffset } from '@deepseek-ai/dsh-session'
 import type { SessionHandle } from '@deepseek-ai/dsh-session-persistence'
 import { convertConversation, selectBranch } from './conversation.ts'
 import type { ConvertConversationOptions, ConvertedConversation } from './conversation.ts'
@@ -558,10 +559,10 @@ async function writeSession(
   cwd: string,
   signal: AbortSignal,
 ): Promise<SessionId> {
-  const id = SessionId(deps.createId())
+  const id = brandString<SessionId>(deps.createId())
   const header: SessionHeader = { version: SESSION_FORMAT_VERSION, id, createdAt: conversion.createdAt, cwd, isSeeded: false }
-  // Construction runs the same seed validation as a live Session; the detached instance is discarded.
-  Session.create(id, conversion.events, header)
+  // Run the seed validation of a live Session before storing the log.
+  validateSessionLog(header, conversion.events)
   signal.throwIfAborted()
   const handle = await deps.persistence.create(header, { signal })
   try {
@@ -570,7 +571,7 @@ async function writeSession(
   } finally {
     await handle.close()
   }
-  deps.projectionCache?.coldSnapshot(header, SessionLogOffset(0), conversion.events)
+  deps.projectionCache?.coldSnapshot(header, brandNumber<SessionLogOffset>(0), conversion.events)
   return id
 }
 
