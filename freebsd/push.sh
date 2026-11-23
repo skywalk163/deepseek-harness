@@ -34,6 +34,10 @@
 #         2 = 用法/环境错误
 # ---------------------------------------------------------------------------
 set -u
+# 凭据缺失时立刻失败：本脚本常在非交互通道（ssh 后台 / CI）里跑，
+# git 的交互式 Username 提示会让整个推送静默挂死（2026-11-23 踩过）。
+GIT_TERMINAL_PROMPT=0
+export GIT_TERMINAL_PROMPT
 
 SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
 REPO_ROOT=$(dirname "$SCRIPT_DIR")
@@ -139,6 +143,15 @@ if [ -z "$GITEA_BASE" ]; then
 fi
 
 # 组装带凭据的推送 URL（只在内存里，回显前一律 redact）
+# 兜底：.env 里写的是大写 `GITEA_URL`（不带 userinfo），早期版本只认小写 `gitea=`。
+# 不给这条兜底时 gitea_push_url() 会退回「无凭据的 remote URL」，push 挂在 Username 提示上。
+if [ -z "$GITEA_BASE" ]; then
+  GITEA_BASE=$(env_get GITEA_URL)
+fi
+if [ -z "$GITEA_USER_ENV" ] && [ -n "$GITEA_BASE" ]; then
+  GITEA_USER_ENV=$(env_get GITEA_ADMIN_USER)
+fi
+
 gitcode_push_url() {
   if [ -n "${GITCODE_TOKEN:-}" ]; then
     case "$GITCODE_URL" in
